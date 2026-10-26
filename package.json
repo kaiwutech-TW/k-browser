@@ -1,0 +1,42 @@
+{
+  "name": "k-browser",
+  "version": "0.4.0",
+  "description": "Drive your real, signed-in Chrome from local agents (Claude Code, Codex, Antigravity, Kav) through a CDP-compatible endpoint.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kaiwutech-TW/k-browser.git"
+  },
+  "homepage": "https://github.com/kaiwutech-TW/k-browser#readme",
+  "bugs": {
+    "url": "https://github.com/kaiwutech-TW/k-browser/issues"
+  },
+  "bin": {
+    "k-browser": "src/cli.js"
+  },
+  "files": [
+    "src",
+    "extension"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "test:chrome": "node --test --test-concurrency=1 --test-timeout=120000 test/integration/",
+    "typecheck": "tsc -p jsconfig.json",
+    "check": "npm run typecheck && npm test",
+    "test:pack": "node --test --test-timeout=300000 test/release/"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.300",
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "typescript": "^5.7.0"
+  }
+}

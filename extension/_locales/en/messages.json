@@ -1,0 +1,314 @@
+{
+  "lang": {
+    "message": "en"
+  },
+  "extDescription": {
+    "message": "Lets local agents (Claude Code, Codex, Antigravity, Kav) drive tabs in this Chrome through the k-browser bridge on 127.0.0.1."
+  },
+  "popupOpenPanel": {
+    "message": "Open activity panel"
+  },
+  "popupWaiting": {
+    "message": "Waiting for you"
+  },
+  "popupCodeLabel": {
+    "message": "Pairing code"
+  },
+  "popupCodeHint": {
+    "message": "Get it in a terminal with"
+  },
+  "popupPair": {
+    "message": "Pair"
+  },
+  "popupRepair": {
+    "message": "Pair again…"
+  },
+  "popupNote": {
+    "message": "Only tabs an agent opened itself are reported; your other tabs are never seen."
+  },
+  "stateOnline": {
+    "message": "Connected"
+  },
+  "stateOffline": {
+    "message": "Bridge not connected"
+  },
+  "stateUnpaired": {
+    "message": "Not paired"
+  },
+  "stateError": {
+    "message": "Error"
+  },
+  "stateConnecting": {
+    "message": "Connecting"
+  },
+  "bgUnpaired": {
+    "message": "Run `k-browser pair` in a terminal and paste the code below"
+  },
+  "btnShow": {
+    "message": "Show"
+  },
+  "btnReturn": {
+    "message": "Return"
+  },
+  "panelTitle": {
+    "message": "K-Browser activity"
+  },
+  "panelConnecting": {
+    "message": "Connecting…"
+  },
+  "panelModelHeading": {
+    "message": "Kav's judgement model"
+  },
+  "panelDecisionsHeading": {
+    "message": "Decision dataset"
+  },
+  "panelConfiguredHeading": {
+    "message": "Configured programs"
+  },
+  "agoSec": {
+    "message": "{0} s ago"
+  },
+  "agoMin": {
+    "message": "{0} min ago"
+  },
+  "agoHour": {
+    "message": "{0} h ago"
+  },
+  "tagClient": {
+    "message": "client-provided"
+  },
+  "tagSdk": {
+    "message": "judged by the SDK from the observation log"
+  },
+  "verdict": {
+    "message": "Verdict: {0}"
+  },
+  "records": {
+    "message": "records {0}"
+  },
+  "outcomeRefused": {
+    "message": " (refused by policy)"
+  },
+  "outcomeError": {
+    "message": " (error)"
+  },
+  "connections": {
+    "message": "{0} connections"
+  },
+  "connection1": {
+    "message": "1 connection"
+  },
+  "lastActive": {
+    "message": "last active {0}"
+  },
+  "handoffWaiting": {
+    "message": "Waiting for you: {0}"
+  },
+  "handoffSince": {
+    "message": "asked {0}"
+  },
+  "tabsHeading": {
+    "message": "Tabs ({0})"
+  },
+  "untitled": {
+    "message": "(untitled)"
+  },
+  "openedByPopup": {
+    "message": " (opened by a site popup)"
+  },
+  "backgroundTab": {
+    "message": " (background tab)"
+  },
+  "closeTabs": {
+    "message": "Close its tabs"
+  },
+  "revoke": {
+    "message": "Revoke this program"
+  },
+  "revokeConfirm": {
+    "message": "Click again to revoke"
+  },
+  "actionLog": {
+    "message": "Actions"
+  },
+  "noClients": {
+    "message": "No program is connected."
+  },
+  "about": {
+    "message": "K-Browser {0} · extension {1} · {2} · decision dataset {3}"
+  },
+  "startedLaunchd": {
+    "message": "starts at login (launchd)"
+  },
+  "startedManual": {
+    "message": "started by hand"
+  },
+  "on": {
+    "message": "on"
+  },
+  "off": {
+    "message": "off"
+  },
+  "connected": {
+    "message": "connected"
+  },
+  "idle": {
+    "message": "idle"
+  },
+  "allowListOnly": {
+    "message": "allow list only"
+  },
+  "blockedN": {
+    "message": "{0} sites blocked"
+  },
+  "screenshotState": {
+    "message": "screenshots {0}"
+  },
+  "evalState": {
+    "message": "eval {0}"
+  },
+  "settingsOpen": {
+    "message": "Settings…"
+  },
+  "settingsClose": {
+    "message": "Hide settings"
+  },
+  "noConfigured": {
+    "message": "No program is set up yet: run k-browser install."
+  },
+  "allowListNote": {
+    "message": "Allow-list mode: the sites it may use are set in its file (allowedOrigins); the panel does not change them. This program cannot use JEV."
+  },
+  "blockedNotList": {
+    "message": "Its blockedOrigins is not a list: fix its file in a terminal."
+  },
+  "categoriesHint": {
+    "message": "Blocked site categories (✓ blocks the whole category; click to switch. Turning one off also removes sites you added by hand that are exactly the same as that category's):"
+  },
+  "partial": {
+    "message": " (partly)"
+  },
+  "otherSites": {
+    "message": "{0} more sites added by hand; the panel leaves them alone."
+  },
+  "anyBlockNoJev": {
+    "message": "With any blocking, this program cannot use JEV (takes effect at once)."
+  },
+  "screenshotLabel": {
+    "message": "Screenshots: {0} "
+  },
+  "screenshotOff": {
+    "message": "Turn screenshots off"
+  },
+  "screenshotOn": {
+    "message": "Turn screenshots on"
+  },
+  "evalOnLabel": {
+    "message": "eval: on "
+  },
+  "evalOff": {
+    "message": "Turn eval off"
+  },
+  "evalOffNote": {
+    "message": "eval: off (to turn it on, run k-browser client set {0} --eval on in a terminal)"
+  },
+  "settingsApply": {
+    "message": "Changes to blocking, screenshots and eval apply when this program restarts (or reconnects its k-browser MCP server)."
+  },
+  "current": {
+    "message": "Now: {0}"
+  },
+  "decisionsExplain": {
+    "message": "While on, Kav records each judgement it makes in run_flow: kept only on this computer (~/.k-browser/decisions), redacted, for 30 days, for training site-specific models later. Takes effect from the next run_flow; turning it off does not delete what was recorded."
+  },
+  "decisionsOff": {
+    "message": "Turn the decision dataset off"
+  },
+  "decisionsOn": {
+    "message": "Turn the decision dataset on"
+  },
+  "decisionsPurge": {
+    "message": "To delete it all, run k-browser decisions purge in a terminal."
+  },
+  "backendKev": {
+    "message": "local Kev"
+  },
+  "backendJev": {
+    "message": "cloud JEV (TypeSafe)"
+  },
+  "backendOff": {
+    "message": "off (judgements go back to the agent)"
+  },
+  "unknown": {
+    "message": "unknown"
+  },
+  "problemCloud": {
+    "message": "No agreement to the current version: nothing is sent"
+  },
+  "problemKey": {
+    "message": "No JEV key: nothing is sent"
+  },
+  "problemConfig": {
+    "message": "The settings file cannot be read: Kav cannot use any model"
+  },
+  "useKev": {
+    "message": "Use local Kev"
+  },
+  "modelOff": {
+    "message": "Turn the model off"
+  },
+  "useJev": {
+    "message": "Use cloud JEV…"
+  },
+  "jevLimited": {
+    "message": "These programs have site limits and cannot use JEV: {0}"
+  },
+  "listSep": {
+    "message": ", "
+  },
+  "noJevKey": {
+    "message": "No JEV key yet: import it in a terminal with k-browser model jev (the key never passes through the browser)."
+  },
+  "agreeJev": {
+    "message": "Agree and use JEV"
+  },
+  "cancel": {
+    "message": "Cancel"
+  },
+  "gap": {
+    "message": "Some updates did not arrive (the panel or the disk fell behind); what is shown may be incomplete. {0}"
+  },
+  "gapReconnect": {
+    "message": "Some updates did not arrive (the panel fell behind; it resyncs after reconnecting). {0}"
+  },
+  "cmdDone": {
+    "message": "Done: {0}"
+  },
+  "cmdNotDone": {
+    "message": "Did not run {0}: {1}"
+  },
+  "panelConnected": {
+    "message": "Connected"
+  },
+  "panelReconnecting": {
+    "message": "Reconnecting…"
+  },
+  "cat_banking": {
+    "message": "Online banking"
+  },
+  "cat_payments": {
+    "message": "Payments"
+  },
+  "cat_email": {
+    "message": "Email"
+  },
+  "cat_government": {
+    "message": "Government (gov.tw)"
+  },
+  "cat_crypto": {
+    "message": "Crypto exchanges"
+  },
+  "cat_passwords": {
+    "message": "Password managers"
+  }
+}

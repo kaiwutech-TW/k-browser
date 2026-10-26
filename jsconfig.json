@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "checkJs": true,
+    "allowJs": true,
+    "noEmit": true,
+    "strict": true,
+    "target": "es2023",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "lib": ["es2023", "dom"],
+    "types": ["node", "chrome"],
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.js", "extension/**/*.js", "extension/globals.d.ts", "test/**/*.js"]
+}

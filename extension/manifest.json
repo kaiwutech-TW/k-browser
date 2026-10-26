@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "K-Browser",
+  "version": "0.4.0",
+  "description": "__MSG_extDescription__",
+  "default_locale": "en",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtxeQYFzNa75xQ+w9MiuFc+0oikcI3Q027+CJxOskH9K5e0awrXGaDsIahKJaS0fjeFI0L8oUz7u6o0MuGsqPXXRTy6mFaGN9llzyU7gcyUcmhXyGydnJkGIcMq/RVw9V+91BFdTb5wyUTX/dNm8SiwhRGQUuMw9aLlw3jSjBvAo53+QstA3cVScUFBUT/j93gJvuOuP4J9pLMZ2J3NOVZGnW5cLZv78wuLyuDvgKbEEkmXshUgOW2+qXPhb6F+6uT57TAz6m+25ghiil55z8pyPDNHRXR5dVW5bgDKn153QvBRMD+c2+VNuNb0O8Vr02HoSqp2qU7c8Ap8RYUE4KgQIDAQAB",
+  "minimum_chrome_version": "125",
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": [
+    "tabs",
+    "tabGroups",
+    "debugger",
+    "storage",
+    "alarms",
+    "webNavigation",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "side_panel": {
+    "default_path": "panel.html"
+  },
+  "action": {
+    "default_title": "K-Browser",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png"
+    }
+  }
+}

@@ -1,0 +1,314 @@
+---
+// The showcase page, in either language (text in src/i18n/landing.ts). Dark only: a developer-tool page whose
+// screenshot is the dark side panel. The documentation (Starlight) follows the system theme.
+import '../styles/fonts.css';
+import {
+	Activity, AppWindow, ArrowRight, BookOpen, Hand, MousePointerClick, Quote, ShieldBan, SquareStack, ToggleLeft,
+} from '@lucide/astro';
+import { landing, type Lang } from '../i18n/landing';
+
+interface Props { lang: Lang }
+const t = landing[Astro.props.lang];
+const icons = { stack: SquareStack, window: AppWindow, click: MousePointerClick, ban: ShieldBan, quote: Quote, hand: Hand, activity: Activity, toggle: ToggleLeft };
+const agents = ['Claude Code', 'Codex', 'Antigravity', 'Gemini CLI', 'Kav'];
+const inlineCode = (s: string) => s.split('`').map((part, i) => (i % 2 ? `<code>${part}</code>` : part)).join('');
+---
+<!doctype html>
+<html lang={t.htmlLang}>
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>{t.title}</title>
+	<meta name="description" content={t.description} />
+	<meta name="color-scheme" content="dark" />
+	<meta name="theme-color" content="#0a0a0b" />
+	<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+	<link rel="alternate" hreflang={t.other.lang} href={t.other.href} />
+	<meta property="og:title" content={t.title} />
+	<meta property="og:description" content={t.description} />
+	<meta property="og:type" content="website" />
+</head>
+<body>
+	<a class="skip" href="#main">{Astro.props.lang === 'en' ? 'Skip to content' : '跳到內容'}</a>
+	<header class="top">
+		<div class="wrap bar">
+			<a class="brand" href={t.home} aria-label="K-Browser">
+				<img src="/favicon.svg" alt="" width="28" height="28" />
+				<span>K-Browser</span>
+			</a>
+			<nav aria-label={Astro.props.lang === 'en' ? 'Main' : '主要'}>
+				<a class="hide-sm" href="#how">{t.nav.how}</a>
+				<a class="hide-sm" href="#safety">{t.nav.safety}</a>
+				<a class="hide-sm" href="#tools">{t.nav.tools}</a>
+				<a href={t.docs}>{t.nav.docs}</a>
+				<a href="https://github.com/kaiwutech-TW/k-browser">GitHub</a>
+				<a class="lang" href={t.other.href} hreflang={t.other.lang} lang={t.other.lang}>{t.other.label}</a>
+			</nav>
+		</div>
+	</header>
+
+	<main id="main">
+		<section class="hero wrap">
+			<div class="hero-text">
+				<p class="eyebrow">{t.hero.eyebrow}</p>
+				<h1>{t.hero.title.map((line, i) => <span class={i === 2 ? 'accent' : undefined}>{line}</span>)}</h1>
+				<p class="lead">{t.hero.lead}</p>
+				<div class="ctas">
+					<a class="btn primary" href={`${t.docs}install/`}>{t.hero.primary}<ArrowRight size={18} aria-hidden="true" /></a>
+					<a class="btn ghost" href="#how">{t.hero.secondary}</a>
+				</div>
+			</div>
+			<figure class="terminal" aria-label={t.hero.terminalTitle}>
+				<div class="term-bar"><i></i><i></i><i></i><span>{t.hero.terminalTitle}</span></div>
+				<pre><code><span class="c"># 1</span>
+<span class="p">$</span> npm install
+<span class="c"># 2 · {Astro.props.lang === 'en' ? 'agents + bridge' : 'agent + 橋接'}</span>
+<span class="p">$</span> k-browser install
+<span class="o">? Block site categories: banking,email</span>
+<span class="o">✓ claude-code  ✓ codex  ✓ antigravity  ✓ gemini-cli</span>
+<span class="c"># 3 · {Astro.props.lang === 'en' ? 'pair the extension' : '配對擴充'}</span>
+<span class="p">$</span> k-browser pair
+<span class="p">$</span> k-browser doctor
+<span class="ok">"ok": true, "startedBy": "launchd"</span></code></pre>
+			</figure>
+		</section>
+
+		<section class="agents wrap" aria-label={t.agents.label}>
+			<span class="agents-label">{t.agents.label}</span>
+			<ul>{agents.map((a) => <li>{a}</li>)}</ul>
+			<span class="agents-note">{t.agents.note}</span>
+		</section>
+
+		<section id="how" class="wrap section">
+			<h2>{t.how.title}</h2>
+			<p class="section-lead">{t.how.lead}</p>
+			<ol class="flow">
+				{t.how.parts.map((p, i) => (
+					<li class="node">
+						<span class="step">{i + 1}</span>
+						<h3>{p.name}</h3>
+						<p class="where">{p.where}</p>
+						<p>{p.text}</p>
+					</li>
+				))}
+			</ol>
+		</section>
+
+		<section id="safety" class="wrap section">
+			<h2>{t.safety.title}</h2>
+			<p class="section-lead">{t.safety.lead}</p>
+			<ul class="grid">
+				{t.safety.items.map((item) => {
+					const Icon = icons[item.icon as keyof typeof icons];
+					return (
+						<li class="card">
+							<span class="icon"><Icon size={20} aria-hidden="true" /></span>
+							<h3>{item.title}</h3>
+							<p set:html={inlineCode(item.text)} />
+						</li>
+					);
+				})}
+			</ul>
+		</section>
+
+		<section class="wrap section split">
+			<div>
+				<h2>{t.panel.title}</h2>
+				<p class="section-lead">{t.panel.lead}</p>
+				<ul class="checks">{t.panel.points.map((p) => <li>{p}</li>)}</ul>
+			</div>
+			<figure class="shot">
+				<img src={t.panel.img} alt={t.panel.alt} width="380" height="760" loading="lazy" decoding="async" />
+				<figcaption>{t.panel.caption}</figcaption>
+			</figure>
+		</section>
+
+		<section id="tools" class="wrap section">
+			<h2>{t.tools.title}</h2>
+			<p class="section-lead">{t.tools.lead}</p>
+			<ul class="tools">
+				{t.tools.list.map(([name, text]) => (
+					<li><code>{name}</code><span>{text}</span></li>
+				))}
+			</ul>
+			<a class="more" href={`${t.docs}tools/`}>{t.tools.more}<ArrowRight size={16} aria-hidden="true" /></a>
+		</section>
+
+		<section class="wrap section kav">
+			<div class="kav-box">
+				<h2>{t.kav.title}</h2>
+				<p>{t.kav.text}</p>
+				<a class="more" href={`${t.docs}kav/`}>{t.kav.link}<ArrowRight size={16} aria-hidden="true" /></a>
+			</div>
+		</section>
+
+		<section id="start" class="wrap section">
+			<h2>{t.start.title}</h2>
+			<p class="section-lead">{t.start.lead}</p>
+			<ol class="steps">
+				{t.start.steps.map(([label, cmd]) => (
+					<li>
+						<span>{label}</span>
+						{cmd && <pre><code>{cmd}</code></pre>}
+					</li>
+				))}
+			</ol>
+			<a class="btn primary" href={`${t.docs}install/`}><BookOpen size={18} aria-hidden="true" />{t.start.cta}</a>
+		</section>
+	</main>
+
+	<footer class="foot">
+		<div class="wrap foot-in">
+			<div class="brand small"><img src="/favicon.svg" alt="" width="20" height="20" /><span>K-Browser</span></div>
+			<nav aria-label="Footer">
+				<a href={t.docs}>{t.footer.docs}</a>
+				<a href={`${t.docs}install/`}>{t.footer.install}</a>
+				<a href={`${t.docs}safety/`}>{t.footer.safety}</a>
+				<a href="https://github.com/kaiwutech-TW/k-browser">GitHub</a>
+				<a href={t.other.href} hreflang={t.other.lang} lang={t.other.lang}>{t.other.label}</a>
+			</nav>
+			<p>{t.footer.license} {t.footer.ack}</p>
+		</div>
+	</footer>
+</body>
+</html>
+
+<style is:global>
+	:root {
+		--bg: #0a0a0b;
+		--bg-2: #111113;
+		--card: #151518;
+		--line: #26262b;
+		--line-2: #34343b;
+		--text: #f4f4f5;
+		--text-2: #b4b4bc;
+		--text-3: #8d8d96;
+		--brand: #b00d23;
+		--brand-hover: #c9162f;
+		--accent: #f0546a;
+		--ok: #4ade80;
+		--radius: 14px;
+		--font: 'IBM Plex Sans Variable', -apple-system, BlinkMacSystemFont, 'PingFang TC', 'Noto Sans TC', sans-serif;
+		--mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
+		color-scheme: dark;
+	}
+	* { box-sizing: border-box; }
+	html { scroll-behavior: smooth; scroll-padding-top: 72px; }
+	body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 var(--font); -webkit-font-smoothing: antialiased; }
+	a { color: inherit; }
+	code { font-family: var(--mono); font-size: .92em; }
+	p code, li code { background: var(--bg-2); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
+	:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+	.skip { position: absolute; left: -999px; top: 8px; background: var(--text); color: var(--bg); padding: 8px 12px; border-radius: 8px; z-index: 10; }
+	.skip:focus { left: 16px; }
+	.wrap { width: 100%; max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+	@media (min-width: 640px) { .wrap { padding: 0 28px; } }
+
+	/* header */
+	.top { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+	.bar { display: flex; align-items: center; justify-content: space-between; height: 60px; gap: 16px; }
+	.brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 650; font-size: 17px; text-decoration: none; letter-spacing: .01em; }
+	.brand.small { font-size: 15px; gap: 8px; }
+	.top nav { display: flex; align-items: center; gap: 4px; }
+	.top nav a { text-decoration: none; color: var(--text-2); font-size: 15px; padding: 8px 10px; border-radius: 8px; min-height: 40px; display: inline-flex; align-items: center; transition: color .15s, background-color .15s; }
+	.top nav a:hover { color: var(--text); background: var(--bg-2); }
+	.top nav a.lang { border: 1px solid var(--line-2); margin-left: 6px; color: var(--text); }
+	@media (max-width: 720px) { .hide-sm { display: none !important; } }
+
+	/* hero */
+	.hero { display: grid; gap: 40px; padding-top: 72px; padding-bottom: 56px; align-items: center; }
+	@media (min-width: 960px) { .hero { grid-template-columns: 1.05fr .95fr; gap: 56px; padding-top: 104px; } }
+	.eyebrow { margin: 0 0 18px; color: var(--text-3); font: 500 13px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+	h1 { margin: 0; font-size: clamp(40px, 7vw, 68px); line-height: 1.05; letter-spacing: -.025em; font-weight: 680; }
+	h1 span { display: block; }
+	h1 .accent { color: var(--accent); }
+	.lead { margin: 24px 0 0; font-size: 18px; color: var(--text-2); max-width: 36em; }
+	.ctas { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
+	.btn { display: inline-flex; align-items: center; gap: 8px; min-height: 46px; padding: 0 20px; border-radius: 10px; font-weight: 600; font-size: 16px; text-decoration: none; border: 1px solid transparent; transition: background-color .15s, border-color .15s, transform .15s; cursor: pointer; }
+	.btn.primary { background: var(--brand); color: #fff; }
+	.btn.primary:hover { background: var(--brand-hover); }
+	.btn.ghost { border-color: var(--line-2); color: var(--text); }
+	.btn.ghost:hover { background: var(--bg-2); border-color: var(--text-3); }
+	.btn:active { transform: translateY(1px); }
+
+	.terminal { margin: 0; background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; box-shadow: 0 30px 80px -40px rgba(176, 13, 35, .45), 0 0 0 1px rgba(255,255,255,.02); min-width: 0; }
+	.term-bar { display: flex; align-items: center; gap: 7px; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--card); }
+	.term-bar i { width: 11px; height: 11px; border-radius: 50%; background: var(--line-2); }
+	.term-bar span { margin-left: 8px; font-size: 13px; color: var(--text-3); }
+	.terminal pre { margin: 0; padding: 20px; overflow-x: auto; font: 14px/1.75 var(--mono); }
+	.terminal .c { color: var(--text-3); }
+	.terminal .p { color: var(--accent); user-select: none; }
+	.terminal .o { color: var(--text-2); }
+	.terminal .ok { color: var(--ok); }
+
+	/* agents strip */
+	.agents { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding-top: 20px; padding-bottom: 20px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+	.agents-label { color: var(--text-3); font-size: 14px; }
+	.agents ul { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+	.agents li { font: 500 14px/1 var(--mono); padding: 9px 12px; border: 1px solid var(--line-2); border-radius: 999px; color: var(--text); }
+	.agents-note { color: var(--text-3); font-size: 14px; }
+
+	/* sections */
+	.section { padding-top: 96px; }
+	h2 { margin: 0; font-size: clamp(28px, 4vw, 40px); line-height: 1.15; letter-spacing: -.02em; font-weight: 650; }
+	.section-lead { margin: 14px 0 0; color: var(--text-2); font-size: 17px; max-width: 42em; }
+	h3 { margin: 0; font-size: 17px; font-weight: 620; }
+
+	.flow { list-style: none; margin: 40px 0 0; padding: 0; display: grid; gap: 16px; counter-reset: none; }
+	@media (min-width: 860px) { .flow { grid-template-columns: repeat(3, 1fr); gap: 40px; } }
+	.node { position: relative; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px; }
+	@media (min-width: 860px) {
+		.node:not(:last-child)::after { content: ''; position: absolute; top: 50%; right: -30px; width: 20px; height: 2px; background: var(--line-2); }
+		.node:not(:last-child)::before { content: ''; position: absolute; top: calc(50% - 4px); right: -31px; border: 5px solid transparent; border-left-color: var(--line-2); border-right: 0; }
+	}
+	.step { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--bg-2); border: 1px solid var(--line-2); font: 600 13px/1 var(--mono); color: var(--accent); margin-bottom: 14px; }
+	.where { margin: 4px 0 10px; font: 500 13px/1.4 var(--mono); color: var(--text-3); }
+	.node p:last-child { margin: 0; color: var(--text-2); font-size: 15px; }
+
+	.grid { list-style: none; margin: 40px 0 0; padding: 0; display: grid; gap: 16px; grid-template-columns: 1fr; }
+	@media (min-width: 620px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+	@media (min-width: 1000px) { .grid { grid-template-columns: repeat(4, 1fr); } }
+	.card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; transition: border-color .2s; }
+	.card:hover { border-color: var(--line-2); }
+	.icon { display: inline-grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; background: rgba(240, 84, 106, .1); color: var(--accent); margin-bottom: 14px; }
+	.card p { margin: 8px 0 0; color: var(--text-2); font-size: 15px; }
+
+	.split { display: grid; gap: 40px; align-items: center; }
+	@media (min-width: 900px) { .split { grid-template-columns: 1fr 380px; gap: 72px; } }
+	.checks { list-style: none; margin: 28px 0 0; padding: 0; display: grid; gap: 12px; }
+	.checks li { position: relative; padding-left: 30px; color: var(--text); }
+	.checks li::before { content: ''; position: absolute; left: 0; top: .35em; width: 18px; height: 18px; border-radius: 50%; background: rgba(74, 222, 128, .12); box-shadow: inset 0 0 0 1px rgba(74, 222, 128, .5); }
+	.checks li::after { content: ''; position: absolute; left: 6px; top: calc(.35em + 4px); width: 5px; height: 9px; border: solid var(--ok); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+	.shot { margin: 0 auto; max-width: 380px; width: 100%; }
+	.shot img { display: block; width: 100%; height: auto; border-radius: var(--radius); border: 1px solid var(--line-2); box-shadow: 0 30px 80px -40px rgba(0,0,0,.9); }
+	.shot figcaption { margin-top: 10px; color: var(--text-3); font-size: 13px; text-align: center; }
+
+	.tools { list-style: none; margin: 36px 0 0; padding: 0; display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; grid-template-columns: 1fr; }
+	@media (min-width: 700px) { .tools { grid-template-columns: repeat(2, 1fr); } }
+	@media (min-width: 1000px) { .tools { grid-template-columns: repeat(3, 1fr); } }
+	.tools li { background: var(--card); padding: 16px 18px; display: grid; gap: 4px; }
+	.tools code { color: var(--accent); font-weight: 600; font-size: 14px; background: none; border: 0; padding: 0; }
+	.tools span { color: var(--text-2); font-size: 14px; }
+	.more { display: inline-flex; align-items: center; gap: 6px; margin-top: 20px; color: var(--accent); font-weight: 600; text-decoration: none; min-height: 40px; }
+	.more:hover { text-decoration: underline; text-underline-offset: 4px; }
+
+	.kav-box { background: linear-gradient(135deg, rgba(176, 13, 35, .14), rgba(176, 13, 35, 0) 60%), var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 32px; }
+	.kav-box h2 { font-size: clamp(22px, 3vw, 28px); }
+	.kav-box p { color: var(--text-2); max-width: 52em; margin: 14px 0 0; }
+
+	.steps { list-style: none; counter-reset: s; margin: 36px 0 28px; padding: 0; display: grid; gap: 14px; max-width: 760px; }
+	.steps li { counter-increment: s; position: relative; padding-left: 44px; }
+	.steps li::before { content: counter(s); position: absolute; left: 0; top: 0; width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; background: var(--bg-2); border: 1px solid var(--line-2); font: 600 13px/1 var(--mono); color: var(--accent); }
+	.steps span { display: block; padding-top: 2px; }
+	.steps pre { margin: 8px 0 0; padding: 12px 14px; background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; font: 13.5px/1.6 var(--mono); color: var(--text-2); }
+
+	.foot { margin-top: 112px; border-top: 1px solid var(--line); padding: 32px 0 40px; }
+	.foot-in { display: grid; gap: 14px; }
+	.foot nav { display: flex; flex-wrap: wrap; gap: 4px 18px; }
+	.foot nav a { color: var(--text-2); text-decoration: none; font-size: 14px; min-height: 32px; display: inline-flex; align-items: center; }
+	.foot nav a:hover { color: var(--text); }
+	.foot p { margin: 0; color: var(--text-3); font-size: 13px; }
+
+	.hero > *, .split > *, .steps li, .flow > *, .grid > * { min-width: 0; }
+	@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { transition: none !important; } }
+</style>

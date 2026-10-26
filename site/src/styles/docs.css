@@ -1,0 +1,33 @@
+/* Starlight theme: zinc greys and the K mark's red (#B00D23), lightened in dark mode for contrast. */
+:root {
+	--sl-font: 'IBM Plex Sans Variable', -apple-system, BlinkMacSystemFont, 'PingFang TC', 'Noto Sans TC', sans-serif;
+	--sl-font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
+	--sl-color-accent-low: #3a0b13;
+	--sl-color-accent: #f0546a;
+	--sl-color-accent-high: #ffd0d6;
+	--sl-color-white: #fafafa;
+	--sl-color-gray-1: #e4e4e7;
+	--sl-color-gray-2: #c4c4cc;
+	--sl-color-gray-3: #a1a1aa;
+	--sl-color-gray-4: #71717a;
+	--sl-color-gray-5: #3f3f46;
+	--sl-color-gray-6: #27272a;
+	--sl-color-black: #0f0f11;
+}
+:root[data-theme='light'] {
+	--sl-color-accent-low: #fde2e5;
+	--sl-color-accent: #b00d23;
+	--sl-color-accent-high: #5c0612;
+	--sl-color-white: #18181b;
+	--sl-color-gray-1: #27272a;
+	--sl-color-gray-2: #3f3f46;
+	--sl-color-gray-3: #52525b;
+	--sl-color-gray-4: #71717a;
+	--sl-color-gray-5: #d4d4d8;
+	--sl-color-gray-6: #f4f4f5;
+	--sl-color-gray-7: #fafafa;
+	--sl-color-black: #ffffff;
+}
+
+/* The site title in the header is the product name, not a link colour. */
+.site-title { color: var(--sl-color-white); }

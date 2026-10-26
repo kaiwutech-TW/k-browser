@@ -1,0 +1,65 @@
+---
+title: 安裝
+description: 安裝橋接、登記你的 agent、載入擴充並配對。
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+**需求**:macOS · Google Chrome 125 以上 · Node.js 22 以上(`node -v` 確認)。
+
+以下的 `k-browser` 指的是在 K-Browser 資料夾裡執行 `node src/cli.js`。在那個資料夾執行一次 `npm link`,之後在任何地方都能直接打 `k-browser`。
+
+<Steps>
+
+1. **取得程式**
+
+   ```sh
+   git clone https://github.com/kaiwutech-TW/k-browser.git K-Browser
+   cd K-Browser
+   npm install
+   ```
+
+2. **登記到你的 agent,並啟動橋接**
+
+   請在真正的終端機裡執行，不要透過 agent 執行:
+
+   ```sh
+   k-browser install
+   ```
+
+   它會問你要替 agent 封鎖哪些[網站類別](/zh-tw/docs/safety/#封鎖網站類別)(用逗號分隔;直接按 Enter 表示都不封鎖),替每家 agent 建立自己的 client 和 token 並寫進它的 MCP 設定，再把橋接裝成 LaunchAgent,登入後自動啟動。每個被改的檔案都會先備份,`k-browser restore <backup.json>` 可以還原。
+
+   沒有終端機可以問問題時，必須直接把答案寫在指令上，否則安裝會拒絕執行:
+
+   ```sh
+   k-browser install --block banking,email     # 封鎖這些類別
+   k-browser install --block ""                # 確定都不封鎖
+   ```
+
+   `--dry-run` 會列出會改哪些檔案;`--client claude-code|codex|antigravity|gemini-cli` 只裝給一家 agent。
+
+3. **把擴充載入 Chrome**
+
+   打開 `chrome://extensions`,開啟右上角的「**開發人員模式**」,按「**載入未封裝項目**」,選 `extension/` 資料夾(完整路徑可用 `k-browser extension-path` 查)。把紅色的 **K** 釘選在工具列上,agent 把分頁交給你時會用到。
+
+4. **配對擴充和橋接**
+
+   ```sh
+   k-browser pair
+   ```
+
+   把配對碼貼進 K-Browser 彈出視窗，按「**配對**」,狀態變成綠色的「**已連線**」。
+
+5. **確認**
+
+   ```sh
+   k-browser doctor
+   ```
+
+   看到 `"ok": true`,而且 `startedBy` 是 `launchd`,就全部就緒。重開你的 agent(或重連它的 `k-browser` MCP),它就有 K-Browser 的工具了。
+
+</Steps>
+
+<Aside type="note" title="關於配對碼">
+配對碼是橋接和擴充之間的共用密鑰。沒有它，橋接不接受任何擴充，別的程式也冒充不了擴充。`k-browser pair --rotate` 會換一個新的，舊的立刻失效。「橋接未連線」不是配對的問題，是橋接沒在執行;請看 `k-browser doctor`。
+</Aside>

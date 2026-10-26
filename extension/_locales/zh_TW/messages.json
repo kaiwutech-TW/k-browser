@@ -1,0 +1,314 @@
+{
+  "lang": {
+    "message": "zh-TW"
+  },
+  "extDescription": {
+    "message": "讓本機的 agent(Claude Code、Codex、Antigravity、Kav)透過 127.0.0.1 上的 k-browser 橋接操作這個 Chrome 的分頁。"
+  },
+  "popupOpenPanel": {
+    "message": "開啟活動面板"
+  },
+  "popupWaiting": {
+    "message": "等你處理"
+  },
+  "popupCodeLabel": {
+    "message": "配對碼"
+  },
+  "popupCodeHint": {
+    "message": "在終端機執行這個指令取得:"
+  },
+  "popupPair": {
+    "message": "配對"
+  },
+  "popupRepair": {
+    "message": "重新配對…"
+  },
+  "popupNote": {
+    "message": "只會回報 agent 自己開的分頁;你的其他分頁不會被看到。"
+  },
+  "stateOnline": {
+    "message": "已連線"
+  },
+  "stateOffline": {
+    "message": "橋接未連線"
+  },
+  "stateUnpaired": {
+    "message": "尚未配對"
+  },
+  "stateError": {
+    "message": "錯誤"
+  },
+  "stateConnecting": {
+    "message": "連線中"
+  },
+  "bgUnpaired": {
+    "message": "在終端機執行 `k-browser pair`,把配對碼貼到下面"
+  },
+  "btnShow": {
+    "message": "顯示"
+  },
+  "btnReturn": {
+    "message": "交還"
+  },
+  "panelTitle": {
+    "message": "K-Browser 活動"
+  },
+  "panelConnecting": {
+    "message": "連線中…"
+  },
+  "panelModelHeading": {
+    "message": "Kav 的判斷模型"
+  },
+  "panelDecisionsHeading": {
+    "message": "決策資料集"
+  },
+  "panelConfiguredHeading": {
+    "message": "已設定的程式"
+  },
+  "agoSec": {
+    "message": "{0} 秒前"
+  },
+  "agoMin": {
+    "message": "{0} 分前"
+  },
+  "agoHour": {
+    "message": "{0} 小時前"
+  },
+  "tagClient": {
+    "message": "客戶端提供"
+  },
+  "tagSdk": {
+    "message": "SDK 依觀測紀錄判定"
+  },
+  "verdict": {
+    "message": "判定:{0}"
+  },
+  "records": {
+    "message": "紀錄 {0}"
+  },
+  "outcomeRefused": {
+    "message": "(被策略拒絕)"
+  },
+  "outcomeError": {
+    "message": "(錯誤)"
+  },
+  "connections": {
+    "message": "{0} 個連線"
+  },
+  "connection1": {
+    "message": "1 個連線"
+  },
+  "lastActive": {
+    "message": "最後活動 {0}"
+  },
+  "handoffWaiting": {
+    "message": "等你處理:{0}"
+  },
+  "handoffSince": {
+    "message": "等了 {0}"
+  },
+  "tabsHeading": {
+    "message": "分頁({0})"
+  },
+  "untitled": {
+    "message": "(無標題)"
+  },
+  "openedByPopup": {
+    "message": "(網站彈窗開的)"
+  },
+  "backgroundTab": {
+    "message": "(背景分頁)"
+  },
+  "closeTabs": {
+    "message": "關閉它的分頁"
+  },
+  "revoke": {
+    "message": "撤銷這個程式"
+  },
+  "revokeConfirm": {
+    "message": "再按一次確定撤銷"
+  },
+  "actionLog": {
+    "message": "動作紀錄"
+  },
+  "noClients": {
+    "message": "目前沒有程式連線。"
+  },
+  "about": {
+    "message": "K-Browser {0} · 擴充 {1} · {2} · 決策資料集{3}"
+  },
+  "startedLaunchd": {
+    "message": "開機自動啟動(launchd)"
+  },
+  "startedManual": {
+    "message": "手動啟動"
+  },
+  "on": {
+    "message": "開"
+  },
+  "off": {
+    "message": "關"
+  },
+  "connected": {
+    "message": "連線中"
+  },
+  "idle": {
+    "message": "閒置"
+  },
+  "allowListOnly": {
+    "message": "只允許清單"
+  },
+  "blockedN": {
+    "message": "封鎖 {0} 個網站"
+  },
+  "screenshotState": {
+    "message": "截圖{0}"
+  },
+  "evalState": {
+    "message": "eval {0}"
+  },
+  "settingsOpen": {
+    "message": "設定…"
+  },
+  "settingsClose": {
+    "message": "收起設定"
+  },
+  "noConfigured": {
+    "message": "還沒有設定任何程式:執行 k-browser install。"
+  },
+  "allowListNote": {
+    "message": "只允許清單模式:能用哪些網站由它的設定檔(allowedOrigins)決定,面板不改。這個程式不能用 JEV。"
+  },
+  "blockedNotList": {
+    "message": "它的 blockedOrigins 不是清單:請在終端機修正它的設定檔。"
+  },
+  "categoriesHint": {
+    "message": "封鎖網站類別(✓ 表示整類封鎖,按一下切換;取消時,你手動加過、和這類完全相同的網址也會一起拿掉):"
+  },
+  "partial": {
+    "message": "(部分)"
+  },
+  "otherSites": {
+    "message": "另有 {0} 個自己加的網站,面板不動。"
+  },
+  "anyBlockNoJev": {
+    "message": "有任何封鎖,這個程式就不能用 JEV(立即生效)。"
+  },
+  "screenshotLabel": {
+    "message": "截圖:{0} "
+  },
+  "screenshotOff": {
+    "message": "關閉截圖"
+  },
+  "screenshotOn": {
+    "message": "開啟截圖"
+  },
+  "evalOnLabel": {
+    "message": "eval:開 "
+  },
+  "evalOff": {
+    "message": "關閉 eval"
+  },
+  "evalOffNote": {
+    "message": "eval:關(要開請在終端機執行 k-browser client set {0} --eval on)"
+  },
+  "settingsApply": {
+    "message": "封鎖、截圖、eval 的變更,要等這個程式重新啟動(或重新連接它的 k-browser MCP)才生效。"
+  },
+  "current": {
+    "message": "目前:{0}"
+  },
+  "decisionsExplain": {
+    "message": "開著時,Kav 在 run_flow 裡每做一個判斷就記一筆:只存在這台電腦(~/.k-browser/decisions),遮罩後保留 30 天,留給日後訓練網站專用模型。下一次 run_flow 起生效;關掉不會刪掉已記的。"
+  },
+  "decisionsOff": {
+    "message": "關閉決策資料集"
+  },
+  "decisionsOn": {
+    "message": "開啟決策資料集"
+  },
+  "decisionsPurge": {
+    "message": "要全部刪除:在終端機執行 k-browser decisions purge。"
+  },
+  "backendKev": {
+    "message": "本機 Kev"
+  },
+  "backendJev": {
+    "message": "雲端 JEV(TypeSafe)"
+  },
+  "backendOff": {
+    "message": "關閉(判斷交回 agent)"
+  },
+  "unknown": {
+    "message": "不明"
+  },
+  "problemCloud": {
+    "message": "沒有目前版本的同意,不會送出"
+  },
+  "problemKey": {
+    "message": "沒有 JEV 金鑰,不會送出"
+  },
+  "problemConfig": {
+    "message": "設定檔讀不到,Kav 完全不能用模型"
+  },
+  "useKev": {
+    "message": "改用本機 Kev"
+  },
+  "modelOff": {
+    "message": "關閉模型"
+  },
+  "useJev": {
+    "message": "改用雲端 JEV…"
+  },
+  "jevLimited": {
+    "message": "這些程式有網站限制,不能用 JEV:{0}"
+  },
+  "listSep": {
+    "message": "、"
+  },
+  "noJevKey": {
+    "message": "還沒有 JEV 金鑰:先在終端機執行 k-browser model jev 匯入(金鑰不經過瀏覽器)。"
+  },
+  "agreeJev": {
+    "message": "同意以上內容並改用 JEV"
+  },
+  "cancel": {
+    "message": "取消"
+  },
+  "gap": {
+    "message": "有些更新沒送到(面板或磁碟跟不上),顯示可能不完整。{0}"
+  },
+  "gapReconnect": {
+    "message": "有些更新沒送到(面板跟不上,重新連線後會重新同步)。{0}"
+  },
+  "cmdDone": {
+    "message": "已執行:{0}"
+  },
+  "cmdNotDone": {
+    "message": "沒有執行 {0}:{1}"
+  },
+  "panelConnected": {
+    "message": "已連線"
+  },
+  "panelReconnecting": {
+    "message": "重新連線中…"
+  },
+  "cat_banking": {
+    "message": "網路銀行"
+  },
+  "cat_payments": {
+    "message": "支付"
+  },
+  "cat_email": {
+    "message": "電子郵件"
+  },
+  "cat_government": {
+    "message": "政府服務(gov.tw)"
+  },
+  "cat_crypto": {
+    "message": "加密貨幣交易所"
+  },
+  "cat_passwords": {
+    "message": "密碼管理器"
+  }
+}

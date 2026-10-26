@@ -1,0 +1,3 @@
+/* Self-hosted (no request to a font service). Chinese text falls back to the system's CJK fonts. */
+@import '@fontsource-variable/ibm-plex-sans';
+@import '@fontsource-variable/jetbrains-mono';

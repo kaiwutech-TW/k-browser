@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title data-i18n="panelTitle">K-Browser</title>
+<style>
+  /* Tokens: light by default, dark with the system (the side panel follows macOS). No web fonts: an extension page
+     loads nothing from the network. */
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9; --surface: #ffffff; --surface-2: #f1f3f6; --border: #dde1e7; --border-strong: #c5cbd3;
+    --text: #111827; --text-2: #4b5563; --text-3: #6b7280;
+    --accent: #2563eb; --accent-text: #ffffff; --accent-soft: #e8efff;
+    --ok: #15803d; --ok-soft: #e7f6ec; --warn: #b45309; --warn-soft: #fff4e0; --bad: #b91c1c; --bad-soft: #fdecec;
+    --radius: 8px; --radius-sm: 6px; --focus: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --surface: #171a21; --surface-2: #1f232c; --border: #2a2f3a; --border-strong: #3a4150;
+      --text: #e6e8ec; --text-2: #b4bac5; --text-3: #8b93a1;
+      --accent: #6b9bff; --accent-text: #0b1020; --accent-soft: #1d2a47;
+      --ok: #4ade80; --ok-soft: #13291c; --warn: #fbbf24; --warn-soft: #2e2410; --bad: #f87171; --bad-soft: #321718;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.5 -apple-system, BlinkMacSystemFont, "PingFang TC", "Noto Sans TC", sans-serif; }
+  header { position: sticky; top: 0; z-index: 1; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px);
+    padding: 10px 12px 8px; border-bottom: 1px solid var(--border); }
+  h1 { font-size: 15px; font-weight: 650; margin: 0; letter-spacing: .01em; }
+  main { padding: 10px 12px 24px; display: grid; gap: 12px; }
+  section, .client { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; }
+  h2 { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); margin: 0 0 8px; }
+  .client h2 { margin: 12px 0 6px; }
+  #clients { display: grid; gap: 10px; }
+  .client strong { font-size: 14px; }
+  .muted { color: var(--text-3); font-size: 12px; }
+  .hint { color: var(--text-2); font-size: 12px; margin-bottom: 6px; }
+  .refused, .error { color: var(--bad); }
+
+  .status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); margin-top: 4px; }
+  .status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); flex: none; }
+  .status.ok::before { background: var(--ok); } .status.warn::before { background: var(--warn); } .status.bad::before { background: var(--bad); }
+  .status.bad { color: var(--bad); }
+  #about { margin-top: 2px; }
+
+  .tab { cursor: pointer; padding: 6px 8px; margin: 0 -8px; border-radius: var(--radius-sm); transition: background-color .15s; }
+  .tab:hover { background: var(--surface-2); }
+  .url { color: var(--text-3); font: 11px/1.4 var(--mono); word-break: break-all; }
+  .handoff { background: var(--warn-soft); border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); border-radius: var(--radius-sm); padding: 8px 10px; margin: 8px 0; }
+  .entry { font: 12px/1.5 var(--mono); padding: 2px 0; color: var(--text-2); border-top: 1px dashed var(--border); }
+  .entry.label { font-family: inherit; font-weight: 600; color: var(--text); margin-top: 4px; }
+  .entry.refused, .entry.error { color: var(--bad); }
+  .tag { display: inline-block; font-size: 10px; line-height: 16px; color: var(--text-3); border: 1px solid var(--border-strong); border-radius: 999px; padding: 0 6px; margin-left: 6px; vertical-align: 1px; }
+  .tag.on { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); background: var(--ok-soft); }
+  .on { color: var(--ok); }
+  .gap { background: var(--bad-soft); color: var(--bad); padding: 8px 10px; border-radius: var(--radius-sm); margin: 0 12px; }
+
+  .cfg { padding: 8px 0; font-size: 12px; }
+  #configured .cfg + .cfg { border-top: 1px solid var(--border); }
+  #configured .cfg > span:first-child { font-weight: 600; font-size: 13px; }
+  .current { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 13px; padding: 2px 0 6px; }
+  .current::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); }
+  .current.ok::before { background: var(--ok); } .current.warn::before { background: var(--warn); } .current.idle::before { background: var(--text-3); }
+  .setting { margin-top: 6px; }
+
+  button { font: inherit; font-size: 12px; font-weight: 500; color: var(--text); background: var(--surface); border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm); padding: 5px 10px; min-height: 28px; margin: 6px 6px 0 0; cursor: pointer; transition: background-color .15s, border-color .15s; }
+  button:hover { background: var(--surface-2); }
+  button:focus-visible, .tab:focus-visible { outline: none; box-shadow: var(--focus); }
+  button.small { padding: 3px 9px; min-height: 26px; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  button.primary:hover { background: color-mix(in srgb, var(--accent) 88%, var(--text)); }
+  button.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+  button.danger:hover { background: var(--bad-soft); }
+  button.ghost { border-color: transparent; color: var(--text-2); }
+  button.ghost:hover { background: var(--surface-2); }
+  button.chip { border-radius: 999px; padding: 3px 11px; min-height: 26px; margin: 4px 4px 0 0; }
+  button.chip.on { background: var(--ok-soft); color: var(--ok); border-color: color-mix(in srgb, var(--ok) 55%, transparent); font-weight: 600; }
+  button.chip.part { border-style: dashed; }
+
+  .consent { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px; margin: 8px 0 2px; font-size: 12px; }
+  .consent > div + div { margin-top: 4px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+  <header>
+    <h1 data-i18n="panelTitle"></h1>
+    <div id="status" class="status" data-i18n="panelConnecting"></div>
+    <div id="about" class="muted"></div>
+  </header>
+  <div id="gap" class="gap" hidden></div>
+  <main>
+    <div id="clients"></div>
+    <section id="modelBox" hidden>
+      <h2 data-i18n="panelModelHeading"></h2>
+      <div id="model"></div>
+    </section>
+    <section id="decisionsBox" hidden>
+      <h2 data-i18n="panelDecisionsHeading"></h2>
+      <div id="decisions"></div>
+    </section>
+    <section>
+      <h2 data-i18n="panelConfiguredHeading"></h2>
+      <div id="configured"></div>
+    </section>
+  </main>
+  <script src="i18n.js"></script>
+  <script src="panel.js"></script>
+</body>
+</html>

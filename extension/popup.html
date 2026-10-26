@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>K-Browser</title>
+<style>
+  body { font: 13px/1.5 -apple-system, "PingFang TC", sans-serif; width: 300px; margin: 12px; color: #1d1d1f; }
+  h1 { font-size: 15px; margin: 0 0 8px; }
+  .state { padding: 6px 8px; border-radius: 6px; background: #f2f2f2; margin-bottom: 10px; }
+  .online { background: #e3f5e8; } .error { background: #fde7e7; } .unpaired, .offline { background: #fff4d6; }
+  label { display: block; margin: 8px 0 4px; }
+  input { width: 100%; box-sizing: border-box; padding: 5px; font: 12px ui-monospace, monospace; }
+  button { margin-top: 8px; padding: 5px 10px; }
+  .muted { color: #6e6e73; font-size: 12px; }
+  #handoffs { border: 1px solid #f0c36d; background: #fff8e6; border-radius: 6px; padding: 6px 8px; margin-bottom: 10px; }
+  .handoff + .handoff { border-top: 1px solid #f0d9a8; margin-top: 6px; padding-top: 6px; }
+  .handoff button { margin: 4px 6px 0 0; }
+  .link { background: none; border: 0; padding: 0; margin-top: 6px; color: #6e6e73; font-size: 12px; text-decoration: underline; cursor: pointer; }
+</style>
+</head>
+<body>
+  <h1>K-Browser</h1>
+  <div id="state" class="state">…</div>
+  <button id="panel" data-i18n="popupOpenPanel"></button>
+  <div id="handoffs" hidden><strong data-i18n="popupWaiting"></strong><div id="handoff-list"></div></div>
+  <!-- shown only while pairing is what is missing (not paired yet, or the bridge refused the code); hidden once
+       connected so the code field is not touched by mistake -->
+  <div id="pairing" hidden>
+    <label for="code" data-i18n="popupCodeLabel"></label>
+    <div class="muted"><span data-i18n="popupCodeHint"></span> <code>k-browser pair</code></div>
+    <input id="code" type="password" autocomplete="off" spellcheck="false">
+    <button id="save" data-i18n="popupPair"></button>
+  </div>
+  <button id="repair" class="link" hidden data-i18n="popupRepair"></button>
+  <p class="muted" data-i18n="popupNote"></p>
+  <script src="i18n.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

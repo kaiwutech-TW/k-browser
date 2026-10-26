@@ -1,0 +1,71 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>K-Browser footprint self-check</title>
+<!--
+  The self-check page. The page watches itself and, when "send report" is
+  clicked, POSTs what it saw to /report. It proves only that these checks passed:
+  - fetch / XMLHttpRequest / addEventListener / Function.prototype.toString are still native;
+  - no new globals since load;
+  - no DOM changes after load (this page's own handlers change nothing, and typing into a field changes its value,
+    not the DOM), so any change would be the SDK's;
+  - every input event is trusted; how many mousemoves came before the first click; the keydown codes;
+  - document.hasFocus() / visibilityState (focus emulation makes them visible/true: a known, visible change).
+-->
+<style>
+  body { margin: 0; font: 14px sans-serif; }
+  #go { position: absolute; left: 320px; top: 220px; width: 120px; height: 40px; }
+  #name { position: absolute; left: 320px; top: 300px; width: 200px; }
+  #send { position: absolute; left: 320px; top: 380px; width: 120px; height: 40px; }
+</style>
+<button id="go">go</button>
+<input id="name" aria-label="name">
+<button id="send">send report</button>
+<script>
+(() => {
+  const native = (f) => typeof f === 'function' && /\{\s*\[native code\]\s*\}\s*$/.test(Function.prototype.toString.call(f));
+  const startGlobals = new Set(Object.getOwnPropertyNames(window));
+  const mutations = [];
+  // From load on: before that the parser is still adding this page's own nodes.
+  addEventListener('load', () => new MutationObserver((records) => {
+    for (const r of records) {
+      const added = [...r.addedNodes, ...r.removedNodes].map((n) => n.nodeName).join(',');
+      mutations.push(`${r.type} ${r.target.nodeName} ${r.attributeName || added}`.trim());
+    }
+  }).observe(document, { subtree: true, childList: true, attributes: true, characterData: true }));
+  const events = [];
+  let moves = 0;
+  let movesBeforeFirstClick = null;
+  let untrustedMoves = 0;
+  for (const type of ['mousemove', 'mousedown', 'mouseup', 'click', 'dblclick', 'keydown', 'keyup', 'input', 'change']) {
+    addEventListener(type, (e) => {
+      if (type === 'mousemove') {
+        moves += 1;
+        if (!e.isTrusted) untrustedMoves += 1;
+        return;
+      }
+      if (type === 'click' && movesBeforeFirstClick === null) movesBeforeFirstClick = moves;
+      events.push({ type, trusted: e.isTrusted, target: e.target && e.target.id, code: e.code, key: e.key, keyCode: e.keyCode });
+    }, true);
+  }
+  document.getElementById('send').addEventListener('click', () => {
+    const report = {
+      natives: {
+        fetch: native(window.fetch),
+        XMLHttpRequest: native(window.XMLHttpRequest),
+        addEventListener: native(EventTarget.prototype.addEventListener),
+        toString: native(Function.prototype.toString),
+      },
+      newGlobals: Object.getOwnPropertyNames(window).filter((k) => !startGlobals.has(k)),
+      mutations,
+      events,
+      moves,
+      untrustedMoves,
+      movesBeforeFirstClick,
+      value: document.getElementById('name').value,
+      hasFocus: document.hasFocus(),
+      visibility: document.visibilityState,
+    };
+    fetch('/report', { method: 'POST', body: JSON.stringify(report) });
+  });
+})();
+</script>

@@ -1,0 +1,78 @@
+---
+title: Install
+description: Install the bridge, register your agents, load the extension and pair it.
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+**Requirements:** macOS · Google Chrome 125 or later · Node.js 22 or later (`node -v`).
+
+Below, `k-browser` means `node src/cli.js` run in the K-Browser folder. Run `npm link` once in that folder to have a
+`k-browser` command everywhere.
+
+<Steps>
+
+1. **Get the code**
+
+   ```sh
+   git clone https://github.com/kaiwutech-TW/k-browser.git K-Browser
+   cd K-Browser
+   npm install
+   ```
+
+2. **Register with your agents and start the bridge**
+
+   Run this in a real terminal, not through an agent:
+
+   ```sh
+   k-browser install
+   ```
+
+   It asks which [site categories](/docs/safety/#blocked-site-categories) to block for agents (comma-separated; Enter for
+   none), creates a client with its own token for each agent and writes it into that agent's MCP configuration, and
+   installs the bridge as a LaunchAgent so it starts when you log in. Every file it changes is backed up first;
+   `k-browser restore <backup.json>` puts one back.
+
+   Without a terminal to ask in, give the answer on the command line, or install refuses:
+
+   ```sh
+   k-browser install --block banking,email     # block these categories
+   k-browser install --block ""                # block nothing
+   ```
+
+   `--dry-run` shows which files would change; `--client claude-code|codex|antigravity|gemini-cli` installs for one agent.
+
+3. **Load the extension into Chrome**
+
+   Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and choose the `extension/` folder
+   (`k-browser extension-path` prints the full path). Pin the red **K** in the toolbar: you will use it when an agent
+   hands a tab to you.
+
+4. **Pair the extension with the bridge**
+
+   ```sh
+   k-browser pair
+   ```
+
+   Paste the code into the K-Browser popup and click **Pair**. The status turns green (**Connected**).
+
+5. **Check**
+
+   ```sh
+   k-browser doctor
+   ```
+
+   `"ok": true` with `startedBy: "launchd"` means everything is ready. Restart your agent (or reconnect its `k-browser`
+   MCP server) and it has the K-Browser tools.
+
+</Steps>
+
+<Aside type="note" title="About the pairing code">
+The pairing code is a shared secret between the bridge and the extension. Without it the bridge accepts no extension, and
+no other program can pretend to be one. `k-browser pair --rotate` makes a new one; the old one stops working at once.
+"Bridge not connected" is not a pairing problem — the bridge is not running; see `k-browser doctor`.
+</Aside>
+
+<Aside type="tip">
+The extension follows Chrome's language: Traditional Chinese, or English for every other language.
+</Aside>
