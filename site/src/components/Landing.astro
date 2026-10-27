@@ -6,12 +6,47 @@ import {
 	Activity, AppWindow, ArrowRight, BookOpen, Hand, MousePointerClick, Quote, ShieldBan, SquareStack, ToggleLeft,
 } from '@lucide/astro';
 import { landing, type Lang } from '../i18n/landing';
+import pkg from '../../../package.json';
 
 interface Props { lang: Lang }
 const t = landing[Astro.props.lang];
 const icons = { stack: SquareStack, window: AppWindow, click: MousePointerClick, ban: ShieldBan, quote: Quote, hand: Hand, activity: Activity, toggle: ToggleLeft };
 const agents = ['Claude Code', 'Codex', 'Antigravity', 'Gemini CLI', 'Kav'];
-const inlineCode = (s: string) => s.split('`').map((part, i) => (i % 2 ? `<code>${part}</code>` : part)).join('');
+const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const inlineCode = (s: string) => escapeHtml(s).split('`').map((part, i) => (i % 2 ? `<code>${part}</code>` : part)).join('');
+const abs = (path: string) => new URL(path, Astro.site).href;
+const repo = 'https://github.com/kaiwutech-TW/k-browser';
+// Structured data for search engines and AI answer engines: the site, the software, and the FAQ shown on the page.
+const jsonLd = {
+	'@context': 'https://schema.org',
+	'@graph': [
+		{ '@type': 'WebSite', '@id': `${abs('/')}#website`, url: abs('/'), name: 'K-Browser', inLanguage: ['en', 'zh-TW'] },
+		{
+			'@type': 'SoftwareApplication',
+			'@id': `${abs('/')}#software`,
+			name: 'K-Browser',
+			url: abs(t.home),
+			description: t.description,
+			applicationCategory: 'DeveloperApplication',
+			operatingSystem: 'macOS',
+			softwareVersion: pkg.version,
+			softwareRequirements: 'Chrome 125+, Node.js 22+',
+			license: 'https://opensource.org/licenses/MIT',
+			isAccessibleForFree: true,
+			offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+			sameAs: [repo],
+			image: abs(t.ogImage),
+			screenshot: abs(t.panel.img),
+		},
+		{
+			'@type': 'FAQPage',
+			inLanguage: t.htmlLang,
+			mainEntity: t.faq.items.map(({ q, a }) => ({
+				'@type': 'Question', name: q, acceptedAnswer: { '@type': 'Answer', text: a.replaceAll('`', '') },
+			})),
+		},
+	],
+};
 ---
 <!doctype html>
 <html lang={t.htmlLang}>
@@ -23,10 +58,24 @@ const inlineCode = (s: string) => s.split('`').map((part, i) => (i % 2 ? `<code>
 	<meta name="color-scheme" content="dark" />
 	<meta name="theme-color" content="#0a0a0b" />
 	<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-	<link rel="alternate" hreflang={t.other.lang} href={t.other.href} />
+	<link rel="canonical" href={abs(t.home)} />
+	<link rel="alternate" hreflang={t.htmlLang === 'en' ? 'en' : 'zh-TW'} href={abs(t.home)} />
+	<link rel="alternate" hreflang={t.other.lang} href={abs(t.other.href)} />
+	<link rel="alternate" hreflang="x-default" href={abs('/')} />
+	<link rel="sitemap" href="/sitemap-index.xml" />
 	<meta property="og:title" content={t.title} />
 	<meta property="og:description" content={t.description} />
 	<meta property="og:type" content="website" />
+	<meta property="og:url" content={abs(t.home)} />
+	<meta property="og:site_name" content="K-Browser" />
+	<meta property="og:locale" content={t.ogLocale} />
+	<meta property="og:image" content={abs(t.ogImage)} />
+	<meta property="og:image:width" content="1200" />
+	<meta property="og:image:height" content="630" />
+	<meta property="og:image:alt" content={t.title} />
+	<meta name="twitter:card" content="summary_large_image" />
+	<meta name="twitter:image" content={abs(t.ogImage)} />
+	<script type="application/ld+json" set:html={JSON.stringify(jsonLd)} />
 </head>
 <body>
 	<a class="skip" href="#main">{Astro.props.lang === 'en' ? 'Skip to content' : '跳到內容'}</a>
@@ -155,6 +204,18 @@ const inlineCode = (s: string) => s.split('`').map((part, i) => (i % 2 ? `<code>
 			</ol>
 			<a class="btn primary" href={`${t.docs}install/`}><BookOpen size={18} aria-hidden="true" />{t.start.cta}</a>
 		</section>
+
+		<section id="faq" class="wrap section">
+			<h2>{t.faq.title}</h2>
+			<dl class="faq">
+				{t.faq.items.map(({ q, a }) => (
+					<div>
+						<dt>{q}</dt>
+						<dd set:html={inlineCode(a)} />
+					</div>
+				))}
+			</dl>
+		</section>
 	</main>
 
 	<footer class="foot">
@@ -197,7 +258,7 @@ const inlineCode = (s: string) => s.split('`').map((part, i) => (i % 2 ? `<code>
 	body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 var(--font); -webkit-font-smoothing: antialiased; }
 	a { color: inherit; }
 	code { font-family: var(--mono); font-size: .92em; }
-	p code, li code { background: var(--bg-2); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
+	p code, li code, dd code { background: var(--bg-2); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
 	:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
 	.skip { position: absolute; left: -999px; top: 8px; background: var(--text); color: var(--bg); padding: 8px 12px; border-radius: 8px; z-index: 10; }
 	.skip:focus { left: 16px; }
@@ -302,6 +363,10 @@ const inlineCode = (s: string) => s.split('`').map((part, i) => (i % 2 ? `<code>
 	.steps span { display: block; padding-top: 2px; }
 	.steps pre { margin: 8px 0 0; padding: 12px 14px; background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; font: 13.5px/1.6 var(--mono); color: var(--text-2); }
 
+	.faq { margin: 36px 0 0; display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+	.faq div { background: var(--card); padding: 22px 24px; }
+	.faq dt { font-size: 17px; font-weight: 620; }
+	.faq dd { margin: 8px 0 0; color: var(--text-2); max-width: 52em; }
 	.foot { margin-top: 112px; border-top: 1px solid var(--line); padding: 32px 0 40px; }
 	.foot-in { display: grid; gap: 14px; }
 	.foot nav { display: flex; flex-wrap: wrap; gap: 4px 18px; }

@@ -1,0 +1,6 @@
+# Search engines and AI models are welcome to read the whole site, cite it and train on it.
+User-agent: *
+Content-Signal: search=yes, ai-input=yes, ai-train=yes
+Allow: /
+
+Sitemap: https://k-browser.kaiwu.com.tw/sitemap-index.xml

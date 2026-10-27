@@ -5,7 +5,7 @@ import starlight from '@astrojs/starlight';
 // The showcase pages (src/pages/index.astro, src/pages/zh-tw/index.astro) are plain Astro pages; Starlight serves the
 // documentation under /docs/ and /zh-tw/docs/. Static output, for Cloudflare.
 export default defineConfig({
-	site: 'https://k-browser.pages.dev',
+	site: 'https://k-browser.kaiwu.com.tw',
 	integrations: [
 		starlight({
 			title: 'K-Browser',
@@ -19,6 +19,7 @@ export default defineConfig({
 				'zh-tw': { label: '繁體中文', lang: 'zh-TW' },
 			},
 			customCss: ['./src/styles/fonts.css', './src/styles/docs.css'],
+			routeMiddleware: './src/routeData.ts',
 			sidebar: [
 				{
 					label: 'Start here',

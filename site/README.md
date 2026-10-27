@@ -15,5 +15,5 @@ npm run build     # into dist/
 npm run preview
 ```
 
-Deploying to Cloudflare: root directory `site`, build command `npm run build`, output directory `dist`.
-Before publishing, set `site` in `astro.config.mjs` to the real address.
+Live at https://k-browser.kaiwu.com.tw. Deploy with `npm run build` then `npx wrangler deploy` (Cloudflare static assets; settings in
+`wrangler.jsonc`, including the custom domain).

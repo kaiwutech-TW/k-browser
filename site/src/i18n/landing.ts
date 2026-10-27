@@ -9,6 +9,8 @@ const en = {
 		'Open-source bridge that lets Claude Code, Codex, Antigravity and Gemini CLI drive your signed-in Chrome — only the tabs they open, never your focus, under rules you set.',
 	docs: '/docs/',
 	home: '/',
+	ogImage: '/img/og-en.png',
+	ogLocale: 'en_US',
 	other: { label: '中文', href: '/zh-tw/', lang: 'zh-TW' },
 	nav: { how: 'How it works', safety: 'Safety', tools: 'Tools', docs: 'Docs' },
 	hero: {
@@ -95,6 +97,17 @@ const en = {
 		],
 		cta: 'Full install guide',
 	},
+	faq: {
+		title: 'Questions',
+		items: [
+			{ q: 'What is K-Browser?', a: 'An open-source (MIT) bridge that lets the AI agents on your Mac — Claude Code, Codex, Antigravity, Gemini CLI — use the Chrome you are already signed in to, through an MCP server. Each agent works only in the tabs it opened, in a separate window you can watch.' },
+			{ q: 'Which agents does it work with?', a: 'Any MCP client. `k-browser install` registers Claude Code, Codex, Antigravity and Gemini CLI for you. Other programs can get their own CDP endpoint with `k-browser endpoint <name>` — a limited subset of the Chrome DevTools Protocol, with the same rules applied.' },
+			{ q: 'Can an agent see my other tabs or my passwords?', a: 'No. An agent can list, read and act only on tabs it opened itself; your tabs and other agents’ tabs are invisible to it. Password fields are never read, and tokens, card and phone numbers are masked in what it gets back. Masking is rule-based, so still keep agents away from sites you would not trust them with.' },
+			{ q: 'Does K-Browser send my browsing data anywhere?', a: 'K-Browser itself runs on your Mac: the bridge listens only on 127.0.0.1, and its logs, off by default, stay in ~/.k-browser. What an agent reads goes to that agent’s own model, as with any tool it uses. The only cloud option K-Browser has is the JEV model for Kav flows, which stays off until you turn it on and agree to what it sends.' },
+			{ q: 'How is it different from Playwright or Puppeteer?', a: 'Those usually start a separate browser with a fresh profile, so you sign in again — or, attached to your own Chrome, they control all of it. K-Browser uses your existing Chrome and its sign-ins but limits each agent to its own tabs, re-checks the target before every click, never takes your keyboard, and hands logins and captchas to you.' },
+			{ q: 'What do I need, and does it cost anything?', a: 'macOS, Chrome 125 or later and Node.js 22 or later. K-Browser is free and open source under the MIT license. Windows and Linux are not supported yet.' },
+		],
+	},
 	footer: {
 		license: 'MIT licensed.',
 		ack: 'Designed after a review of BeatBrowser (MIT); no code taken from it.',
@@ -111,6 +124,8 @@ const zh: typeof en = {
 		'開源工具，讓 Claude Code、Codex、Antigravity、Gemini CLI 操作你已登入的 Chrome:只碰它自己開的分頁、不搶你的焦點，規則由你決定。',
 	docs: '/zh-tw/docs/',
 	home: '/zh-tw/',
+	ogImage: '/img/og-zh.png',
+	ogLocale: 'zh_TW',
 	other: { label: 'EN', href: '/', lang: 'en' },
 	nav: { how: '運作方式', safety: '安全設計', tools: '工具', docs: '文件' },
 	hero: {
@@ -191,6 +206,17 @@ const zh: typeof en = {
 			['確認，然後重開你的 agent', 'k-browser doctor'],
 		],
 		cta: '完整安裝說明',
+	},
+	faq: {
+		title: '常見問題',
+		items: [
+			{ q: 'K-Browser 是什麼?', a: '一個開源(MIT)的橋接工具，透過 MCP server 讓你 Mac 上的 AI agent(Claude Code、Codex、Antigravity、Gemini CLI)使用你已經登入的 Chrome。每個 agent 只在自己開的分頁裡操作，放在你看得到的獨立視窗。' },
+			{ q: '支援哪些 agent?', a: '任何 MCP client。`k-browser install` 會自動登記 Claude Code、Codex、Antigravity、Gemini CLI。其他程式可以用 `k-browser endpoint <名稱>` 拿到自己的 CDP 端點:Chrome DevTools Protocol 的有限子集，規則一樣適用。' },
+			{ q: 'agent 看得到我其他的分頁或密碼嗎?', a: '看不到。agent 只能列出、讀取、操作它自己開的分頁;你的分頁和別的 agent 的分頁對它都不存在。密碼欄位永遠不讀,token、卡號、電話號碼在回傳前會遮掉。遮蔽是依規則做的，所以不信任的網站還是不要交給 agent。' },
+			{ q: 'K-Browser 會把我的瀏覽資料送出去嗎?', a: 'K-Browser 本身跑在你的 Mac 上：橋接只聽 127.0.0.1,紀錄預設關閉，打開也只存在 ~/.k-browser。agent 讀到的內容會送給那個 agent 自己的模型，跟它用其他工具時一樣。K-Browser 唯一的雲端選項是 Kav 流程用的 JEV 模型，要你自己打開、同意要送出的內容才會啟用。' },
+			{ q: '跟 Playwright、Puppeteer 有什麼不同?', a: '它們通常會另開一個全新設定檔的瀏覽器，你得重新登入;接上你自己的 Chrome 時，則整個瀏覽器都歸它控制。K-Browser 使用你現有的 Chrome 和登入狀態，但每個 agent 只限自己的分頁、每次點擊前重新確認目標、不搶你的鍵盤，登入和驗證碼交給你處理。' },
+			{ q: '需要什麼環境?要錢嗎?', a: 'macOS、Chrome 125 以上、Node.js 22 以上。K-Browser 免費、以 MIT 授權開源。目前還不支援 Windows 和 Linux。' },
+		],
 	},
 	footer: {
 		license: 'MIT 授權。',

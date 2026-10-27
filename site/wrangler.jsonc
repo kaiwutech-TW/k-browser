@@ -1,0 +1,13 @@
+// Cloudflare deployment of the static site: `npm run build`, then `npx wrangler deploy` (assets only, no Worker code).
+{
+	"name": "k-browser",
+	"compatibility_date": "2026-10-01",
+	"workers_dev": false,
+	"preview_urls": false,
+	"routes": [{ "pattern": "k-browser.kaiwu.com.tw", "custom_domain": true }],
+	"assets": {
+		"directory": "./dist",
+		"not_found_handling": "404-page",
+		"html_handling": "auto-trailing-slash"
+	}
+}
