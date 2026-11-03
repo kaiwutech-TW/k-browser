@@ -62,6 +62,7 @@ async function sites() {
       ${button(310, 'xsite', `fetch('${B()}/api/data')`)}`,
     '/frame': () => `<!doctype html><title>frame</title><style>body{margin:0}</style><button>top button</button>
       <iframe src="${B()}/child" width="300" height="150"></iframe>`,
+    '/confirm': () => '<!doctype html><title>confirm</title><button onclick="document.title = String(confirm(\'sure?\'))">ask</button>',
     '/later': () => `<!doctype html><title>later</title><p>soon elsewhere</p>
       <script>setTimeout(() => { location.href = '${B()}/child'; }, 400);</script>`,
   };
@@ -316,6 +317,63 @@ test('a wrong token: the error carries no secret', { skip }, async () => {
     await w.close();
   }
   assert.equal(auth.principalFor(FAKE.wrong), null, 'the bridge does not know that token');
+});
+
+test('the client record changes: a new worker behind the same connection keeps the tab ids and spaces; old refs are stale, new refs above them; another principal gets none of the tabs', { skip }, async () => {
+  const home = String(process.env.KBROWSER_HOME);
+  const file = path.join(home, 'clients', 'agent.json');
+  const rec = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const o = await m.call('tabs', { action: 'open', url: site.A('/main'), space: 'kb' });
+  const tab = o.head.tab;
+  await m.call('snapshot', { tab });
+  const snap = await m.call('snapshot', { tab });
+  const ref = refIn(snap.page ?? '', /button "echo"/);
+  const seq = Number(ref.slice(1, ref.indexOf('.')));
+  const before = (await m.call('status', {})).head;
+  assert.equal(before.screenshot, true);
+  assert.equal(before.shim?.protocol, 1, 'run under the shim');
+
+  writeClient(home, { ...rec, screenshot: false }); // a setting changed in the side panel
+  const status = (await m.call('status', {})).head;
+  assert.equal(status.screenshot, false, 'in force at the next call, without reconnecting');
+  const list = await m.call('tabs', { action: 'list', space: 'kb' });
+  assert.deepEqual(list.head.tabs.map((/** @type {any} */ t) => [t.tab, t.space]), [[tab, 'kb']], list.text);
+  const stale = await m.call('act', { tab, steps: [{ do: 'click', ref }] });
+  assert.deepEqual([stale.isError, stale.head.error], [true, 'stale_ref'], 'a ref of the old worker is not resolved by the new one');
+  const again = await m.call('snapshot', { tab });
+  const fresh = refIn(again.page ?? '', /button "echo"/);
+  assert.ok(Number(fresh.slice(1, fresh.indexOf('.'))) > seq, `${fresh} comes after ${ref}`);
+  assert.equal((await m.call('read', { tab, ref: fresh })).isError, false);
+
+  // a dialog id is never given twice either: one from the old worker is stale, never the dialog open now
+  const c = (await m.call('tabs', { action: 'open', url: site.A('/confirm') })).head.tab;
+  const ask = async () => {
+    const r = await m.call('act', { tab: c, steps: [{ do: 'click', ref: refIn((await m.call('snapshot', { tab: c })).page ?? '', /button "ask"/) }] });
+    assert.equal(r.head.status, 'dialog_open', r.text);
+    return String(r.head.dialog.id);
+  };
+  const d1 = await ask();
+  await m.call('act', { tab: c, dialog: { id: d1, action: 'dismiss' } });
+  writeClient(home, { ...rec, screenshot: true });
+  const d2 = await ask();
+  assert.ok(Number(d2.slice(1)) > Number(d1.slice(1)), `${d2} comes after ${d1}`);
+  assert.equal((await m.call('act', { tab: c, dialog: { id: d1, action: 'accept' } })).head.error, 'stale_dialog');
+  await m.call('act', { tab: c, dialog: { id: d2, action: 'dismiss' } });
+  await m.call('tabs', { action: 'close', tab: c });
+
+  // added again under the same name: a new token and principal own none of the old tabs
+  fs.writeFileSync(file, JSON.stringify({ ...rec, token: `${FAKE.token}X`, principal: 'p-mcp-again' }), { mode: 0o600 });
+  try {
+    const space = await m.call('tabs', { action: 'close', space: 'kb' });
+    assert.deepEqual([space.head.closed, space.head.gone], [[], [tab]], 'not this client\'s tab: not reported as closed');
+    assert.equal((await m.call('read', { tab })).head.error, 'unknown_tab');
+    const fresh2 = await m.call('tabs', { action: 'open', url: site.A('/main') });
+    assert.notEqual(fresh2.head.tab, tab, 'a tab id is never given to another tab');
+    assert.ok(Number(fresh2.head.tab.slice(1)) > Number(tab.slice(1)));
+    await m.call('tabs', { action: 'close', tab: fresh2.head.tab });
+  } finally {
+    writeClient(home, rec);
+  }
 });
 
 test('fake-secret scan: 0 occurrences in every MCP result and in stderr, in all five situations', { skip }, async () => {

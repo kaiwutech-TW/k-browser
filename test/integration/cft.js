@@ -116,9 +116,11 @@ export async function launchChrome({ chrome, profile = fs.mkdtempSync(path.join(
 
   return {
     control,
-    /** Write the pairing code and bridge port, as a user pasting the code into the popup would. @param {string} key @param {number} bridgePort */
-    async pair(key, bridgePort) {
-      return inWorker(`chrome.storage.local.set(${JSON.stringify({ pairKey: key, port: bridgePort })}).then(() => true)`); // inWorker waits for the APIs
+    /** Write the pairing code, bridge port and this profile's name, as a user pasting the code into the popup and pressing
+     * Pair would. @param {string} key @param {number} bridgePort @param {string} [name] */
+    async pair(key, bridgePort, name = '') {
+      const local = { pairKey: key, port: bridgePort, pairing: { name, at: Date.now() } };
+      return inWorker(`chrome.storage.local.set(${JSON.stringify(local)}).then(() => true)`); // inWorker waits for the APIs
     },
     /** Stop the extension's service worker the way Chrome does when it is idle: same extension lifetime (same bootId). */
     async stopWorker() {

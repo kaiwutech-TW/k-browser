@@ -83,12 +83,10 @@ test('a MAC from another handshake is rejected', async () => {
   assert.equal(ext.error.code, 'auth');
 });
 
-test('a second Chrome profile is rejected', async () => {
-  const a = await online({ profile: 'profile-aaaaaaaa' });
-  await a.close();
-  const b = new FakeExtension(bridge.base, key(), { profile: 'profile-bbbbbbbb' });
+test('a Chrome profile not on the list joins only when the user pressed Pair; reconnecting by itself it is refused', async () => {
+  const b = new FakeExtension(bridge.base, key(), { profile: 'profile-bbbbbbbb', pairing: false });
   assert.equal(await b.connect(), false);
-  assert.equal(b.error.code, 'profile');
+  assert.equal(b.error.code, 'profile_unknown');
 });
 
 // ---------- discovery and HTTP guards ----------
@@ -852,7 +850,9 @@ test("an old lifetime's removal records do not block a reused tab id in a new on
   await relay.extConnected(b);
   const { targetId } = await cdp.call('Target.createTarget', { url: 'https://example.org/' });
   assert.equal(targetId, 'T7');
-  assert.ok(relay.byTab.has(7));
+  const t = [...relay.byTab.values()].find((x) => x.targetId === 'T7');
+  assert.ok(t, 'registered');
+  assert.notEqual(t?.tabId, 7, 'under a bridge id of its own: the old lifetime\'s 7 is never given again');
 });
 
 test('attaching turns on focus emulation, so background tabs in the shared window take input', async () => {

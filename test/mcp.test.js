@@ -6,7 +6,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { bodyView, McpSession, render } from '../src/mcp/server.js';
+import { spawn } from 'node:child_process';
+import * as auth from '../src/auth.js';
+import { bodyView, McpSession, render, unknownClientMessage } from '../src/mcp/server.js';
 import { originOf, parsePattern, sitePolicy } from '../src/mcp/sites.js';
 import { TOOLS } from '../src/mcp/tools.js';
 import { escapeTags, wrap } from '../src/mcp/untrusted.js';
@@ -96,11 +98,63 @@ test('a bridge of another version, or none: refused with a clear error before co
   const down = await session(null).call('tabs', { action: 'list' });
   assert.match(JSON.stringify(down.content), /bridge_down.*k-browser doctor/);
   const unknown = await session('').call('tabs', { action: 'list' });
-  assert.match(JSON.stringify(unknown.content), /unknown_client.*codex/);
+  assert.match(JSON.stringify(unknown.content), /unknown_client.*client codex was revoked.*client add codex.*reconnect/);
   assert.deepEqual(connected, [], 'none connected');
   await session(VERSION).call('tabs', { action: 'list' });
   assert.equal(connected.length, 1, 'the same version connects');
   assert.ok(!JSON.stringify(old.content).includes('t'.repeat(43)), 'no token in the message');
+});
+
+test('unknown_client says what happened from the record on disk: revoked, added again, or neither', () => {
+  process.env.KBROWSER_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-mcp-'));
+  const revoked = unknownClientMessage('codex', 'x'.repeat(43));
+  assert.ok(revoked.includes('was revoked') && revoked.includes('`k-browser client add codex`') && /`node \S+cli\.js client add codex`/.test(revoked)
+    && revoked.includes('/mcp'), revoked);
+  assert.ok(!revoked.includes('install'), 'not the whole installer');
+  const token = auth.addClient('codex');
+  const readded = unknownClientMessage('codex', 'x'.repeat(43));
+  assert.ok(readded.includes('added again') && readded.includes('/mcp') && !readded.includes('client add'), readded);
+  assert.ok(!readded.includes(token), 'no token in the message');
+  assert.match(unknownClientMessage('codex', token), /does not know client codex.*doctor/);
+});
+
+test('an MCP server whose client was revoked stays up: status answers unknown_client and what to do', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-mcp-gone-'));
+  const child = spawn(process.execPath, [new URL('../src/cli.js', import.meta.url).pathname, 'mcp', '--client', 'codex', '--port', '1'],
+    { env: { ...process.env, KBROWSER_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'] });
+  /** @type {Map<number, (m: any) => void>} */ const waiting = new Map();
+  let buf = '';
+  child.stdout.on('data', (d) => {
+    buf += d;
+    for (let i; (i = buf.indexOf('\n')) >= 0;) {
+      const m = JSON.parse(buf.slice(0, i));
+      buf = buf.slice(i + 1);
+      waiting.get(m.id)?.(m);
+    }
+  });
+  let ids = 0;
+  /** @param {string} method @param {any} [params] @returns {Promise<any>} */
+  const rpc = (method, params = {}) => new Promise((resolve) => {
+    const id = ++ids;
+    waiting.set(id, resolve);
+    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
+  });
+  try {
+    await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '0' } });
+    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
+    const list = await rpc('tools/list');
+    assert.deepEqual(list.result.tools.map((/** @type {any} */ t) => t.name), ['status']);
+    const r = (await rpc('tools/call', { name: 'status', arguments: {} })).result;
+    assert.equal(r.isError, true);
+    const head = JSON.parse(r.content[0].text);
+    assert.equal(head.error, 'unknown_client');
+    assert.match(head.message, /client codex was revoked.*client add codex/);
+    assert.equal(child.exitCode, null, 'still running');
+  } finally {
+    child.stdin.end();
+    await new Promise((r) => child.once('exit', r));
+  }
+  assert.equal(child.exitCode, 0, 'stdin closed: exits cleanly');
 });
 
 test('the extension and the package carry the same version: doctor and the MCP server compare against it', () => {
@@ -117,4 +171,17 @@ test('network bodies: form markup anywhere (HTML inside JSON, a mislabelled type
   }
   assert.equal(view('<select><option>a</option></select>', 'text/plain').omitted, 'html: use read or snapshot for page text', 'a mislabelled type');
   assert.equal(view('{"status":"OK","inputs":3,"forms":["a"]}').text, '{"status":"OK","inputs":3,"forms":["a"]}', 'words that only look alike stay');
+});
+
+test('a tab whose Chrome profile is not known is not put in a space: it is closed and the agent is told', async () => {
+  process.env.KBROWSER_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-mcp-'));
+  let closed = 0;
+  const tab = { targetId: 'T1', browserContextId: null, close: async () => { closed += 1; } };
+  const browser = { client: { closedWhy: null, call: async () => ({}) }, newTab: async () => tab, close() {} };
+  const session = new McpSession({ name: 'codex', port: 1, record: { token: 't'.repeat(43) }, connect: async () => /** @type {any} */ (browser) });
+  const r = await session.call('tabs', { action: 'open', space: 's1' });
+  assert.equal(JSON.parse(r.content[0].text).error, 'result_unknown');
+  assert.equal(closed, 1, 'the tab was closed');
+  assert.deepEqual(session.tabState().tabs, [], 'and no space was started');
+  assert.equal(session.tabState().next, 1, 'its id is not given again');
 });

@@ -12,7 +12,8 @@ On purpose: rather than guess which tabs were whose, K-Browser lets them go. Clo
 ### The agent reports `bridge_version`
 
 The bridge and the agent's MCP server run different versions. If the bridge is older, run `k-browser service restart`; if
-the agent is, restart it or reconnect its MCP server.
+the agent is, restart it or reconnect its MCP server. From 0.5.0 on, an agent's MCP server follows updates by itself
+(after `k-browser service restart`); one started before 0.5.0 needs reconnecting once.
 
 ### Chrome shows "… started debugging this browser"
 

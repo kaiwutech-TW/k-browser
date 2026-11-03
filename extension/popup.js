@@ -6,6 +6,8 @@ const codeEl = /** @type {HTMLInputElement} */ (document.getElementById('code'))
 const saveEl = /** @type {HTMLButtonElement} */ (document.getElementById('save'));
 const pairingEl = /** @type {HTMLElement} */ (document.getElementById('pairing'));
 const repairEl = /** @type {HTMLButtonElement} */ (document.getElementById('repair'));
+const nameEl = /** @type {HTMLInputElement} */ (document.getElementById('name'));
+const profileEl = /** @type {HTMLElement} */ (document.getElementById('profile'));
 
 // The pairing field shows itself only when pairing is what is missing: not paired yet, or the bridge refused (a
 // wrong or rotated code gives "error"). Connected, connecting or a bridge that is not running: a new code would not
@@ -14,7 +16,11 @@ const NEEDS_PAIRING = new Set(['unpaired', 'error']);
 let unfolded = false;
 
 async function render() {
-  const { status } = await chrome.storage.local.get('status');
+  const { status, profile } = await chrome.storage.local.get(['status', 'profile']);
+  // the bridge's name for this Chrome profile (it may have been renamed there)
+  profileEl.hidden = !profile?.name;
+  profileEl.textContent = profile?.name ? msg('popupProfile', String(profile.name)) : '';
+  if (profile?.name && !nameEl.value) nameEl.value = String(profile.name);
   const s = status || { state: 'connecting', detail: '' };
   stateEl.className = 'state ' + s.state;
   stateEl.textContent = (LABELS[s.state] || s.state) + (s.detail ? ' — ' + s.detail : '');
@@ -39,7 +45,9 @@ document.getElementById('panel')?.addEventListener('click', () => {
 saveEl.addEventListener('click', async () => {
   const code = codeEl.value.trim();
   if (!code) return;
-  await chrome.storage.local.set({ pairKey: code, status: { state: 'connecting', detail: '', at: Date.now() } });
+  // Pair pressed: this is what lets a Chrome profile the bridge does not know (yet, or any more) join it, under this name
+  await chrome.storage.local.set({ pairKey: code, pairing: { name: nameEl.value.trim(), at: Date.now() },
+    status: { state: 'connecting', detail: '', at: Date.now() } });
   codeEl.value = ''; // the worker reconnects on its own when pairKey changes
   unfolded = false; // folds again once connected; a refused code brings it back ("error")
   setTimeout(render, 500);
@@ -74,7 +82,7 @@ async function renderHandoffs() {
 }
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (changes.status) void render();
+  if (changes.status || changes.profile) void render();
   if (area === 'session' && changes.handoffs) void renderHandoffs();
 });
 void render();

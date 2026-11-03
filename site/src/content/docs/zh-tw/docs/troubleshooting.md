@@ -11,7 +11,7 @@ description: 常見狀況和處理方式。
 
 ### agent 回報 `bridge_version`
 
-橋接和 agent 的 MCP server 版本不一致。橋接比較舊，就 `k-browser service restart`;agent 比較舊，就重開 agent 或重連它的 MCP。
+橋接和 agent 的 MCP server 版本不一致。橋接比較舊，就 `k-browser service restart`;agent 比較舊，就重開 agent 或重連它的 MCP。0.5.0 起,agent 的 MCP 會自己跟上新版(橋接 `k-browser service restart` 之後);0.5.0 之前就啟動的 agent 要重連一次。
 
 ### Chrome 上方出現「正在偵錯此瀏覽器」
 

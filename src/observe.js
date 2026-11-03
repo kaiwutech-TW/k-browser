@@ -68,6 +68,8 @@ export class Observer {
     this.seq = 0;
     /** bumped when the extension reconnects: everything observed before belongs to another generation */
     this.obsGen = 0;
+    /** @type {Map<string, number>} per target: how many times its profile's extension reconnected */
+    this.gens = new Map();
     this.marks = 0;
     /** @type {Map<string, TargetLog>} */
     this.logs = new Map();
@@ -126,10 +128,19 @@ export class Observer {
     if (l.boundaries.length > 1000) l.boundaries.splice(0, l.boundaries.length - 1000);
   }
 
-  /** The extension reconnected: every interval ends, a new generation starts. */
-  newGeneration() {
-    for (const id of this.logs.keys()) this.disabled(id, undefined, 'extension reconnected');
-    this.obsGen += 1;
+  /** An extension reconnected: every interval of its profile's targets (all of them when not given) ends, and a new
+   * generation starts for them; marks taken before say so. @param {string[]} [targetIds] */
+  newGeneration(targetIds) {
+    for (const id of targetIds ?? [...this.logs.keys()]) {
+      if (this.logs.has(id)) this.disabled(id, undefined, 'extension reconnected');
+      this.gens.set(id, (this.gens.get(id) ?? 0) + 1);
+    }
+    if (!targetIds) this.obsGen += 1;
+  }
+
+  /** @param {string} targetId */
+  #gen(targetId) {
+    return this.obsGen * 1_000_000 + (this.gens.get(targetId) ?? 0);
   }
 
   /**
@@ -173,7 +184,7 @@ export class Observer {
           // A redirect whose earlier hops are no longer known began at an unknown earlier time: 0, never "after" a mark.
           id: `n${seq}`, seq, chainSeq: p.redirectResponse ? prev?.chainSeq ?? 0 : seq, t: this.now(), requestId: p.requestId,
           hop: prev && p.redirectResponse ? prev.hop + 1 : 0, child, attachGen: l.attachGen,
-          obsGen: this.obsGen, frameId: stringOr(p.frameId), loaderId: stringOr(p.loaderId),
+          obsGen: this.#gen(targetId), frameId: stringOr(p.frameId), loaderId: stringOr(p.loaderId),
           url: String(p.request?.url ?? '').slice(0, this.limits.url), method: String(p.request?.method ?? 'GET'),
           type: stringOr(p.type), status: null, mimeType: null, fromServiceWorker: false, fromCache: false, redirectedTo: false,
           finished: false, failed: null, respondedAt: null, endedAt: null, body: null, bytes: 0,
@@ -271,7 +282,7 @@ export class Observer {
     const l = this.log(targetId, principal);
     const seq = ++this.seq;
     /** @type {Mark} */
-    const m = { actionId: `a${++this.marks}`, seq, t: this.now(), principal, targetId, obsGen: this.obsGen, label: String(label ?? '').slice(0, this.limits.label), source: 'client' };
+    const m = { actionId: `a${++this.marks}`, seq, t: this.now(), principal, targetId, obsGen: this.#gen(targetId), label: String(label ?? '').slice(0, this.limits.label), source: 'client' };
     l.marks.set(m.actionId, m);
     if (l.marks.size > this.limits.marks) l.marks.delete(/** @type {string} */ (l.marks.keys().next().value));
     return m;
@@ -317,7 +328,7 @@ export class Observer {
     /** @type {string[]} */ const why = [];
     if (!l) why.push('nothing observed for this target');
     else {
-      if (mark && mark.obsGen !== this.obsGen) why.push('the extension reconnected after the mark');
+      if (mark && mark.obsGen !== this.#gen(mark.targetId)) why.push('the extension reconnected after the mark');
       const rootOn = l.on.get(ROOT);
       if (typeof rootOn !== 'number') why.push('the network is not being observed (no Network.enable on the tab session)');
       else if (rootOn > since && since > 0) why.push('the network was not observed from the mark on (enabled after it)');

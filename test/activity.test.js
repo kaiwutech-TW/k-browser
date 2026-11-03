@@ -204,7 +204,7 @@ test('bridge: a stuck panel never holds up CDP replies; its queue stays bounded 
   for (let i = 0; i < 400; i++) await cdp.call(`Runtime.evaluate`, { expression: String(i), returnByValue: i % 2 === 0 }, sessionId);
   assert.ok(Date.now() - t0 < 10_000);
   for (let i = 0; i < 300; i++) await cdp.call(i % 2 ? 'Page.reload' : 'Runtime.evaluate', {}, sessionId);
-  assert.ok(/** @type {any} */ (bridge.relay.activity.panel).queue.size <= bridge.relay.activity.limits.queue);
+  assert.ok(/** @type {any} */ ([...bridge.relay.activity.panels][0]).queue.size <= bridge.relay.activity.limits.queue);
   release();
   ext.panelGate = null;
   assert.ok(await until(() => ext.panel.some((b) => b.gap), 3000), 'the panel is told it missed updates');

@@ -30,6 +30,9 @@ let retryMs = 1000;
 let attempt = 0;
 /** @type {ReturnType<typeof setTimeout> | null} */
 let retryTimer = null;
+/** The bridge refused this Chrome profile itself (not on its list, or the name asked for is taken): retrying cannot
+ * help, so nothing reconnects until the user pairs again from the popup. */
+const HALT = new Set(['profile_unknown', 'profile_name_taken', 'profile_name_invalid']);
 
 // ---------- status (read by the popup) ----------
 
@@ -73,9 +76,10 @@ function scheduleReconnect() {
 async function connect() {
   if (current && (current.sock.readyState === WebSocket.CONNECTING || current.sock.readyState === WebSocket.OPEN)) return;
   const mine = ++attempt;
-  const { pairKey, port = 9444 } = await chrome.storage.local.get(['pairKey', 'port']);
+  const { pairKey, port = 9444, pairing, halted } = await chrome.storage.local.get(['pairKey', 'port', 'pairing', 'halted']);
   if (mine !== attempt || current) return; // superseded while reading settings (they may be the old ones)
   if (!pairKey) { await setStatus('unpaired', chrome.i18n.getMessage('bgUnpaired')); return; }
+  if (halted) return; // the status says why; pairing again clears it
   let sock;
   try { sock = new WebSocket(`ws://127.0.0.1:${port}/ext`); } catch { scheduleReconnect(); return; }
   /** @type {Conn} */
@@ -83,20 +87,23 @@ async function connect() {
   current = conn;
   // Messages are handled one after another while authenticating (the welcome check awaits crypto, and the first
   // command can arrive right behind it); once authenticated, commands run concurrently.
-  sock.onmessage = (e) => { conn.chain = conn.chain.then(() => onMessage(conn, pairKey, e.data)).catch(() => {}); };
+  // pairing: the user just pressed Pair in the popup. Only then may a Chrome profile the bridge does not know join it;
+  // reconnecting by itself (after the profile was removed from the bridge, say) it is refused.
+  sock.onmessage = (e) => { conn.chain = conn.chain.then(() => onMessage(conn, pairKey, e.data, pairing)).catch(() => {}); };
   sock.onclose = async () => {
     clearInterval(conn.ping);
     if (current !== conn) return;
     current = null;
-    const { status } = await chrome.storage.local.get('status');
+    const { status, halted } = await chrome.storage.local.get(['status', 'halted']);
+    if (halted) return;
     if (!status || status.state === 'online' || status.state === 'connecting') await setStatus('offline', 'bridge not reachable; retrying');
     scheduleReconnect();
   };
   sock.onerror = () => {};
 }
 
-/** @param {Conn} conn @param {string} key @param {any} data */
-async function onMessage(conn, key, data) {
+/** @param {Conn} conn @param {string} key @param {any} data @param {{ name?: string } | undefined} pairing */
+async function onMessage(conn, key, data, pairing) {
   if (conn !== current) return; // a retired socket's queued messages die with it: nothing of it runs any more
   let m;
   try { m = JSON.parse(String(data)); } catch { return; }
@@ -113,8 +120,13 @@ async function onMessage(conn, key, data) {
     const product = (navigator.userAgent.match(/Chrome\/[\d.]+/) || ['Chrome'])[0];
     const proof = await mac(key, 'ext', conn.script);
     if (conn !== current) return;
+    // Pair pressed counts for this one hello only: used up before it leaves, so a hello that never got its welcome (the
+    // bridge stopped in between) is not replayed by a later reconnect. Pairing again is the user's to do.
+    if (pairing) await chrome.storage.local.remove('pairing');
+    if (conn !== current) return;
     conn.sock.send(JSON.stringify({ t: 'hello', v: PROTOCOL, nonce: myNonce, mac: proof,
-      profileId, bootId, version: VERSION, userAgent: navigator.userAgent, product }));
+      profileId, bootId, version: VERSION, userAgent: navigator.userAgent, product,
+      ...(pairing ? { pairing: true, profileName: String(pairing.name ?? '') } : {}) }));
   } else if (m.t === 'welcome') {
     // The bridge must prove it knows the pairing key too: whoever grabbed the port first gets nothing.
     const expected = conn.script ? await mac(key, 'bridge', conn.script) : null;
@@ -126,11 +138,14 @@ async function onMessage(conn, key, data) {
     }
     conn.authed = true;
     retryMs = 1000;
+    // the bridge's name for this Chrome profile (the popup and the panel show it); a pairing asked for is done
+    await chrome.storage.local.set({ profile: m.profile ?? null });
     conn.ping = setInterval(() => { if (conn.sock.readyState === WebSocket.OPEN) conn.sock.send('{"t":"ping"}'); }, PING_MS);
     await setStatus('online', `bridge ${m.version}`);
     // a side panel already open: the bridge (new, or restarted) starts sending it updates again
     if (panels.size) sendEvent({ t: 'ev', ev: 'panel.open' });
   } else if (m.t === 'error') {
+    if (HALT.has(m.code)) await chrome.storage.local.set({ halted: m.code });
     await setStatus('error', m.message || m.code);
   }
 }
@@ -175,6 +190,12 @@ async function ensureNotMinimized(tabId) {
 
 /** @type {Record<string, (args: any) => Promise<any>>} */
 const OPS = {
+  async 'profile.name'({ name }) {
+    // renamed on the bridge (`k-browser profile rename`): the popup and the panel show the new name
+    const { profile } = await chrome.storage.local.get('profile');
+    await chrome.storage.local.set({ profile: { ...(profile ?? {}), name: String(name) } });
+    return true;
+  },
   async 'tabs.alive'({ tabIds }) {
     // tabId -> current debugger targetId, so the bridge can tell "same page" from "tab id reused".
     const targets = await chrome.debugger.getTargets();
@@ -460,15 +481,17 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
   return false;
 });
 
-// A new pairing code (or port) takes effect at once, whoever wrote it.
+// A new pairing code (or port), or Pair pressed again, takes effect at once, whoever wrote it.
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local' || !(changes.pairKey || changes.port)) return;
+  if (area !== 'local' || !(changes.pairKey || changes.port || changes.pairing?.newValue)) return;
   attempt += 1; // any attempt still reading the old settings is now stale
   const c = current;
   current = null;
   if (c) { try { c.sock.close(); } catch { /* closed */ } }
   retryMs = 1000;
-  void connect();
+  // the user paired again: a refusal of this profile no longer holds (cleared before connecting reads it)
+  const cleared = changes.pairKey || changes.pairing?.newValue ? chrome.storage.local.remove('halted') : Promise.resolve();
+  void cleared.then(() => connect(), () => connect());
 });
 
 chrome.alarms.create('k-browser-reconnect', { periodInMinutes: 0.5 });

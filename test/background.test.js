@@ -383,3 +383,16 @@ test('a title the page set while its tab was being created reaches the bridge (t
   assert.equal(fake.reply(0, id).result.title, 'loaded title');
   assert.ok(!fake.conns[0].seen.some((m) => m.t === 'ev' && m.ev === 'tab.updated'), 'not owned yet when it fired: not reported, so only the answer can carry it');
 });
+
+test('Pair pressed counts for one hello: used up before it is sent, so a reconnect after a lost welcome does not carry it', async () => {
+  const key = 'k'.repeat(43);
+  const fake = await scriptedBridge(key, { impostor: true }); // never welcomes: as if the bridge stopped before the welcome
+  const h = worker({ port: fake.port, pairKey: key, local: { pairing: { name: 'work', at: 1 } } });
+  assert.ok(await until(() => fake.conns.length >= 1 && fake.conns[0].seen.some((m) => m.t === 'hello')));
+  const first = fake.conns[0].seen.find((m) => m.t === 'hello');
+  assert.deepEqual([first.pairing, first.profileName], [true, 'work']);
+  assert.equal(h.local.pairing, undefined, 'used up');
+  await h.reconnect();
+  assert.ok(await until(() => fake.conns.length >= 2 && fake.conns[1].seen.some((m) => m.t === 'hello')));
+  assert.equal(fake.conns[1].seen.find((m) => m.t === 'hello').pairing, undefined, 'a reconnect is no pairing');
+});

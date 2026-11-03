@@ -26,7 +26,8 @@ class Ev {
 export class ChromeHarness {
   /** @param {{ port: number, pairKey?: string, local?: Record<string, any>, session?: Record<string, any> }} o */
   constructor({ port, pairKey, local = {}, session = {} }) {
-    /** @type {Record<string, any>} */ this.local = { port, ...(pairKey ? { pairKey } : {}), ...local };
+    // a pairing code given here was just typed into the popup: Pair pressed (a profile not yet on the bridge's list joins)
+    /** @type {Record<string, any>} */ this.local = { port, ...(pairKey ? { pairKey, pairing: { name: '', at: 1 } } : {}), ...local };
     /** @type {Record<string, any>} */ this.session = { ...session };
     /** @type {Map<number, { id: string, url: string, title: string, windowId: number }>} */ this.tabs = new Map();
     /** @type {Map<number, 'self' | 'other'>} who has chrome.debugger attached to a tab (another extension, DevTools) */
@@ -83,6 +84,17 @@ export class ChromeHarness {
         for (const [k, v] of Object.entries(items)) changes[k] = { oldValue: store[k], newValue: v };
         Object.assign(store, items);
         h.ev.storageChanged.fire(changes, name);
+      },
+      /** @param {string | string[]} keys */
+      async remove(keys) {
+        /** @type {Record<string, { oldValue?: any, newValue?: any }>} */
+        const changes = {};
+        for (const k of Array.isArray(keys) ? keys : [keys]) {
+          if (!(k in store)) continue;
+          changes[k] = { oldValue: store[k] };
+          delete store[k];
+        }
+        if (Object.keys(changes).length) h.ev.storageChanged.fire(changes, name);
       },
     });
     /** @param {number} id */

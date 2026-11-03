@@ -7,6 +7,11 @@
 // Ownership: a tab belongs to the principal that created it, or to the owner of the owned tab that opened it.
 // Other principals cannot see, attach to or close it. v0 session model: one operating root session per target.
 //
+// Chrome profiles: one extension link slot per paired profile (profiles.js), each reconciled on its own; a tab belongs
+// to the profile whose extension reported it, and every command about it goes to that profile's link. Tab ids are the
+// extension's; inside the bridge each (profile, tab id) has an id of its own (the same number while it is free, never
+// reused), so two profiles' tabs never mix even where Chrome's numbers coincide.
+//
 // Generations: every extension connection is reconciled under an epoch. Work that awaits the extension
 // (reconciliation, adoption, createTarget, attach) re-checks after each await that its link is still the current
 // one and that the target / connection it acts for still exists; stale work never commits and never sends
@@ -20,6 +25,7 @@ import * as files from './files.js';
 import * as model from './model.js';
 import { Handoffs } from './handoff.js';
 import { Observer } from './observe.js';
+import { LEGACY_CONTEXT } from './profiles.js';
 import * as policy from './policy.js';
 import { CATEGORIES, categoriesIn, withCategory } from './sites.js';
 import { VERSION } from './version.js';
@@ -33,12 +39,15 @@ export const SESSION_NOT_FOUND = { code: -32001, message: 'Session with given id
 /** Browser-level methods (no sessionId) the relay answers itself; anything else there is refused. */
 export const BROWSER_METHODS = ['Browser.getVersion', 'Target.getTargets', 'Target.getTargetInfo', 'Target.createTarget',
   'Target.closeTarget', 'Target.activateTarget', 'Target.attachToTarget', 'Target.detachFromTarget', 'Target.setDiscoverTargets',
-  'Target.getBrowserContexts', 'KBrowser.mark', 'KBrowser.queryNetwork', 'KBrowser.getNavigation',
+  'Target.getBrowserContexts', 'KBrowser.profiles', 'KBrowser.mark', 'KBrowser.queryNetwork', 'KBrowser.getNavigation',
   'KBrowser.handoff', 'KBrowser.handoffStatus', 'KBrowser.cancelHandoff', 'KBrowser.tabHandoff', 'KBrowser.reportResult',
   'KBrowser.closeUnlessHandedOff'];
 /** Bookkeeping reads a client repeats all the time: not worth a line in the activity record. */
-const QUIET = new Set(['Browser.getVersion', 'Target.getTargets', 'Target.getTargetInfo', 'Target.setDiscoverTargets', 'Target.getBrowserContexts',
+const QUIET = new Set(['Browser.getVersion', 'Target.getTargets', 'Target.getTargetInfo', 'Target.setDiscoverTargets', 'Target.getBrowserContexts', 'KBrowser.profiles',
   'KBrowser.queryNetwork', 'KBrowser.getNavigation', 'KBrowser.tabHandoff', 'KBrowser.handoffStatus']);
+/** Bridge-side tab ids past any Chrome tab id: used when the extension's own number is taken (another profile, an
+ * earlier extension lifetime). */
+const SPARE_TAB_IDS = 3_000_000_000;
 /** Events a reconnecting extension may send before the bridge has reconciled it: applied afterwards. */
 const BUFFERED = new Set([...LIFECYCLE_EVENTS, 'panel.open', 'panel.close']);
 const LIFECYCLE = new Set(LIFECYCLE_EVENTS);
@@ -96,6 +105,8 @@ export class ExtensionLink {
     this.bootId = hello.bootId ?? '';
     /** @type {string | null} the pairing key this link proved; a rotated key drops the link */
     this.key = null;
+    /** the Chrome profile it speaks for (profiles.js; set by the bridge after the handshake) */
+    this.profile = { id: String(hello.profileId ?? ''), context: DEFAULT_CONTEXT, name: 'default' };
     this.ids = 0;
     /** @type {Map<number, { resolve: (v: any) => void, reject: (e: Error) => void }>} */
     this.pending = new Map();
@@ -151,11 +162,41 @@ export class ExtensionLink {
   }
 }
 
+/** One paired Chrome profile's link and what belongs to its extension's lifetime. */
+class Slot {
+  /** @param {{ id: string, context: string, name: string }} profile */
+  constructor(profile) {
+    this.id = profile.id;
+    this.context = profile.context;
+    this.name = profile.name;
+    /** @type {ExtensionLink | null} the ready link */
+    this.ext = null;
+    /** @type {ExtensionLink | null} a link being reconciled */
+    this.candidate = null;
+    this.epoch = 0;
+    /** @type {Record<string, any>[]} lifecycle events the candidate sent while being reconciled */
+    this.buffered = [];
+    /** @type {string | null} extension lifetime the current targets belong to */
+    this.bootId = null;
+    /** @type {number | null} this profile's K-Browser window; the extension opens a new one if it is gone */
+    this.windowId = null;
+    this.windowLock = new Lock(); // serialises creating tabs (they share the one K-Browser window)
+    /** @type {Map<number, number>} the extension's tab id -> the bridge's */
+    this.toBridge = new Map();
+    /** @type {Map<number, number>} the bridge's tab id -> the extension's */
+    this.toExt = new Map();
+    /** @type {Feed | null} this profile's side panel, while one is open */
+    this.feed = null;
+  }
+}
+
 class Target {
-  /** @param {string} targetId @param {number} tabId @param {string} owner @param {string} [url] @param {string} [title] @param {string | null} [openerId] */
-  constructor(targetId, tabId, owner, url = 'about:blank', title = '', openerId = null) {
+  /** @param {string} targetId @param {number} tabId @param {string} owner @param {string} [url] @param {string} [title] @param {string | null} [openerId]
+   * @param {Slot | null} [slot] */
+  constructor(targetId, tabId, owner, url = 'about:blank', title = '', openerId = null, slot = null) {
     /** @type {string} */ this.targetId = targetId;
-    /** @type {number} */ this.tabId = tabId;
+    /** @type {number} the bridge's tab id */ this.tabId = tabId;
+    /** the Chrome profile it is in */ this.slot = slot;
     /** @type {string} principal id */ this.owner = owner;
     /** @type {string} */ this.url = url;
     /** @type {string} */ this.title = title;
@@ -169,7 +210,8 @@ class Target {
   /** @param {boolean} attached */
   info(attached) {
     /** @type {Record<string, any>} */
-    const d = { targetId: this.targetId, type: 'page', title: this.title, url: this.url, attached, canAccessOpener: false, browserContextId: DEFAULT_CONTEXT };
+    const d = { targetId: this.targetId, type: 'page', title: this.title, url: this.url, attached, canAccessOpener: false,
+      browserContextId: this.slot?.context ?? DEFAULT_CONTEXT };
     if (this.openerId) d.openerId = this.openerId;
     return d;
   }
@@ -254,6 +296,9 @@ export class CdpConn {
   }
 }
 
+/** The target ids of a profile's tabs. @param {Map<string, Target>} targets @param {Slot} slot */
+const mineIds = (targets, slot) => [...targets.values()].filter((t) => t.slot === slot).map((t) => t.targetId);
+
 /** @typedef {(line: string) => void} Log */
 /** @type {Log} */
 const stderr = (line) => console.error(line);
@@ -262,15 +307,15 @@ export class Relay {
   /** @param {{ log?: Log, handoffTtlMs?: number, activity?: Activity }} [o] every log line goes through here (never a URL or token) */
   constructor({ log = stderr, handoffTtlMs, activity = new Activity() } = {}) {
     this.log = log;
-    /** @type {ExtensionLink | null} the ready link */
-    this.ext = null;
-    /** @type {ExtensionLink | null} a link being reconciled */
-    this.candidate = null;
-    this.epoch = 0;
-    /** @type {Record<string, any>[]} lifecycle events the candidate sent while being reconciled */
-    this.buffered = [];
-    /** @type {string | null} extension lifetime the current targets belong to */
-    this.bootId = null;
+    /** @type {Map<string, Slot>} profileId -> its slot */
+    this.slots = new Map();
+    /** @type {Map<number, Slot>} the bridge's tab id -> the profile it is in */
+    this.tabSlot = new Map();
+    /** @type {Set<number>} every bridge tab id ever given out: never given again */
+    this.usedTabIds = new Set();
+    this.spareTabId = SPARE_TAB_IDS;
+    /** @type {import('./profiles.js').Registry} the paired profiles, as the bridge last read them */
+    this.registry = { default: null, profiles: [], retired: [], retiredContexts: [] };
     /** @type {Map<string, Target>} */
     this.targets = new Map();
     /** @type {Map<number, Target>} */
@@ -279,10 +324,7 @@ export class Relay {
     this.conns = new Set();
     /** @type {Set<number>} tabs chrome.debugger is attached to */
     this.attached = new Set();
-    /** @type {number | null} the one K-Browser window; the extension opens a new one if it is gone */
-    this.windowId = null;
     this.lock = new Lock(); // serialises attach/detach decisions
-    this.windowLock = new Lock(); // serialises creating tabs (they share the one K-Browser window)
     /** @type {Set<Promise<void>>} */
     this.tasks = new Set();
     /** @type {Map<number, number>} bumped whenever Chrome says a tab went away, registered or not */
@@ -303,6 +345,156 @@ export class Relay {
     /** what each client did (activity.js), for the side panel */
     this.activity = activity;
     this.panelResults = 0;
+  }
+
+  // ---------- Chrome profiles ----------
+
+  /** The default profile's slot (the registry's default; else any connected one). */
+  #defaultSlot() {
+    const d = this.registry.default;
+    for (const s of this.slots.values()) if (s.context === d) return s;
+    return [...this.slots.values()].find((s) => s.ext) ?? [...this.slots.values()][0] ?? null;
+  }
+
+  /** The default profile's ready link, else any: what "is the extension online" means with one profile. */
+  get ext() {
+    const d = this.#defaultSlot();
+    return d?.ext ?? [...this.slots.values()].find((s) => s.ext)?.ext ?? null;
+  }
+
+  get candidate() {
+    return [...this.slots.values()].find((s) => s.candidate)?.candidate ?? null;
+  }
+
+  /** The default profile's extension lifetime (tests, diagnostics). */
+  get bootId() {
+    return this.#defaultSlot()?.bootId ?? null;
+  }
+
+  get windowId() {
+    return this.#defaultSlot()?.windowId ?? null;
+  }
+
+  /** Tests: as if the default profile's K-Browser window were gone. */
+  set windowId(v) {
+    const d = this.#defaultSlot();
+    if (d) d.windowId = v;
+  }
+
+  /** The default profile's tab-creation lock (tests). */
+  get windowLock() {
+    return this.#defaultSlot()?.windowLock ?? new Lock();
+  }
+
+  /** The profiles as clients and the panel see them. */
+  profiles() {
+    return this.registry.profiles.map((p) => {
+      const slot = this.slots.get(p.id);
+      const ext = slot?.context === p.context ? slot.ext : null;
+      return { context: p.context, name: p.name, online: ext !== null, version: ext?.hello?.version ?? null, default: p.context === this.registry.default };
+    });
+  }
+
+  /**
+   * The registry as just read (the bridge reads it on every poll and before each handshake). A profile removed, or
+   * removed and paired again (a new context under the same profileId), loses everything of its old registration at
+   * once: links, tabs, sessions, hand-offs. A rename reaches the extension and the panels.
+   * @param {import('./profiles.js').Registry} registry
+   */
+  setProfiles(registry) {
+    this.registry = registry;
+    for (const slot of [...this.slots.values()]) {
+      const p = registry.profiles.find((x) => x.id === slot.id);
+      if (!p || p.context !== slot.context) {
+        this.#dropSlot(slot, p ? 'was paired again' : 'was removed');
+        continue;
+      }
+      if (p.name !== slot.name) {
+        slot.name = p.name;
+        slot.ext?.call('profile.name', { name: p.name }).catch(() => {});
+        this.#pushState();
+      }
+    }
+  }
+
+  /** Forget a profile's registration entirely. @param {Slot} slot @param {string} why */
+  #dropSlot(slot, why) {
+    this.log(`k-browser: Chrome profile ${slot.name} ${why}: its tabs are let go`);
+    for (const link of [slot.ext, slot.candidate]) if (link) this.extDisconnected(link);
+    this.handoffs.invalidate((h) => this.tabSlot.get(h.tabId) === slot, `the Chrome profile ${why}`);
+    for (const t of [...this.targets.values()]) if (t.slot === slot) this.#targetGone(t.tabId);
+    this.#forgetTabIds(slot);
+    if (slot.feed) this.activity.panels.delete(slot.feed);
+    this.slots.delete(slot.id);
+    this.#pushState();
+  }
+
+  /** The slot a link speaks for: made when it first connects. @param {ExtensionLink} link */
+  #slotOf(link) {
+    let slot = this.slots.get(link.profile.id);
+    if (slot && slot.context !== link.profile.context) {
+      this.#dropSlot(slot, 'was paired again');
+      slot = undefined;
+    }
+    if (!slot) {
+      slot = new Slot(link.profile);
+      this.slots.set(slot.id, slot);
+    }
+    slot.name = link.profile.name;
+    return slot;
+  }
+
+  /** The bridge's id for an extension's tab id (given now if new): the same number while nobody has had it.
+   * @param {Slot} slot @param {number} extTabId */
+  #bridgeTab(slot, extTabId) {
+    let id = slot.toBridge.get(extTabId);
+    if (id !== undefined) return id;
+    id = this.usedTabIds.has(extTabId) ? ++this.spareTabId : extTabId;
+    this.usedTabIds.add(id);
+    slot.toBridge.set(extTabId, id);
+    slot.toExt.set(id, extTabId);
+    this.tabSlot.set(id, slot);
+    return id;
+  }
+
+  /** A new extension lifetime: its tab ids may name other pages now, so new bridge ids are given from here on. @param {Slot} slot */
+  #forgetTabIds(slot) {
+    for (const id of slot.toExt.keys()) this.tabSlot.delete(id);
+    slot.toBridge.clear();
+    slot.toExt.clear();
+  }
+
+  /** The link and the extension's tab id for a bridge tab id. @param {number} tabId */
+  #where(tabId) {
+    const slot = this.tabSlot.get(tabId);
+    const ext = slot?.toExt.get(tabId);
+    if (!slot || ext === undefined) throw new ExtensionOffline('K-Browser no longer knows that tab (its Chrome profile reconnected)');
+    return { slot, ext };
+  }
+
+  /** @param {Slot} slot */
+  #linkOf(slot) {
+    if (!slot.ext) {
+      const e = new ExtensionOffline(`the K-Browser extension in the Chrome profile "${slot.name}" is not connected`);
+      /** @type {any} */ (e).reconnecting = slot.candidate !== null;
+      throw e;
+    }
+    return slot.ext;
+  }
+
+  /** Call the extension of the tab's profile with the tab's own id. @param {number} tabId @param {string} op @param {Record<string, any>} [args] */
+  #tabCall(tabId, op, args = {}) {
+    const { slot, ext } = this.#where(tabId);
+    return this.#linkOf(slot).call(op, { ...args, tabId: ext });
+  }
+
+  /** An extension message with its tab ids turned into the bridge's. @param {Slot} slot @param {Record<string, any>} msg */
+  #inbound(slot, msg) {
+    const m = { ...msg };
+    for (const k of ['tabId', 'openerTabId', 'removedTabId', 'addedTabId']) {
+      if (Number.isInteger(m[k])) m[k] = this.#bridgeTab(slot, m[k]);
+    }
+    return m;
   }
 
   // ---------- the side panel ----------
@@ -337,32 +529,46 @@ export class Relay {
         screenshot: rec.screenshot !== false, eval: rec.eval === true, sites: Array.isArray(b) ? categoriesIn(b) : null };
     });
     return {
-      about: { version: VERSION, extension: this.ext?.hello?.version ?? null, launchd: process.env.XPC_SERVICE_NAME === 'com.k-browser.bridge',
+      about: { version: VERSION, extension: this.ext?.hello?.version ?? null, profiles: this.profiles(), launchd: process.env.XPC_SERVICE_NAME === 'com.k-browser.bridge',
         decisionLog: readConfig().decisionLog === 'on', model: model.panelView(),
         categories: Object.entries(CATEGORIES).map(([id, c]) => ({ id, label: c.label })) },
       configured,
       clients: [...clients.values()],
       tabs: [...this.targets.values()].map((t) => ({ principal: t.owner, targetId: t.targetId, title: text(t.title, 300), url: redact(t.url),
-        openedBy: t.openerId, attached: this.#hasSessions(t.tabId), background: t.active === false })),
+        openedBy: t.openerId, attached: this.#hasSessions(t.tabId), background: t.active === false,
+        profile: t.slot?.name ?? null, context: t.slot?.context ?? null })),
       handoffs: this.handoffs.waiting().map((h) => {
         const full = [...this.handoffs.items.values()].find((x) => x.handoffId === h.handoffId);
-        return { handoffId: h.handoffId, principal: full?.owner ?? '', targetId: full?.targetId ?? '', reason: text(h.reason, 200), source: 'client', since: full?.createdAt ?? 0 };
+        const slot = this.tabSlot.get(h.tabId);
+        return { handoffId: h.handoffId, principal: full?.owner ?? '', targetId: full?.targetId ?? '', reason: text(h.reason, 200), source: 'client', since: full?.createdAt ?? 0,
+          profile: slot?.name ?? null, context: slot?.context ?? null };
       }),
     };
   }
 
   /** The panel's view changed (tabs, clients, hand-offs): send the whole state, merged with any not yet delivered. */
   #pushState() {
-    this.activity.panel?.push('state', { type: 'state', state: this.panelState() });
+    if (!this.activity.panels.size) return;
+    const state = this.panelState();
+    for (const feed of this.activity.panels) feed.push('state', { type: 'state', state });
   }
 
-  /** A panel opened (or the extension reconnected with one open): a snapshot first, then updates. @param {ExtensionLink} link */
-  #panelOpen(link) {
-    this.activity.panel = new Feed((batch) => {
-      if (this.ext !== link) throw new Error('the extension link changed');
+  /** A panel opened in a profile (or its extension reconnected with one open): a snapshot first, then updates. Each
+   * profile's panel has a feed of its own: a slow or closed one never holds up another. @param {Slot} slot @param {ExtensionLink} link */
+  #panelOpen(slot, link) {
+    if (slot.feed) this.activity.panels.delete(slot.feed);
+    slot.feed = new Feed((batch) => {
+      if (slot.ext !== link) throw new Error('the extension link changed');
       return link.call('panel.push', batch);
     }, this.activity.limits.queue);
-    this.activity.panel.push('snapshot', { type: 'snapshot', state: this.panelState(), activity: this.activity.recent() });
+    this.activity.panels.add(slot.feed);
+    slot.feed.push('snapshot', { type: 'snapshot', state: this.panelState(), activity: this.activity.recent() });
+  }
+
+  /** @param {Slot} slot */
+  #panelClose(slot) {
+    if (slot.feed) this.activity.panels.delete(slot.feed);
+    slot.feed = null;
   }
 
   /**
@@ -371,12 +577,13 @@ export class Relay {
    * the principal the panel showed); the other four name the client by its principal id (never by name) and are
    * checked again here: the tab must still be that client's, the hand-off still waiting and that client's, the
    * principal still the one on disk under that name.
-   * @param {ExtensionLink} link @param {Record<string, any>} msg
+   * The answer goes to the panel that asked; a tab or hand-off is acted on in its own profile.
+   * @param {Slot} slot @param {Record<string, any>} msg
    */
-  async #panelCmd(link, msg) {
+  async #panelCmd(slot, msg) {
     const { op, principal } = msg;
     /** @param {boolean} ok @param {string} [why] */
-    const done = (ok, why) => this.activity.panel?.push(`r${++this.panelResults}`, { type: 'result', op: String(op), ok, ...(why ? { why } : {}) });
+    const done = (ok, why) => slot.feed?.push(`r${++this.panelResults}`, { type: 'result', op: String(op), ok, ...(why ? { why } : {}) });
     try {
       if (op === 'model') {
         // where Kav's decisions go: kev / off at once; jev only with the agreement text the panel showed (its version
@@ -427,17 +634,18 @@ export class Relay {
       if (op === 'show') {
         const t = this.targets.get(String(msg.targetId));
         if (!t || t.owner !== principal) return done(false, 'not that client\'s tab (any more)');
-        await link.call('tabs.show', { tabId: t.tabId });
+        await this.#tabCall(t.tabId, 'tabs.show');
         return done(true);
       }
       if (op === 'return') {
         const h = this.handoffs.get(principal, msg.handoffId);
         if (!h || h.state !== 'waiting') return done(false, 'that hand-off is not waiting (any more)');
+        if (this.tabSlot.get(h.tabId) !== slot) return done(false, 'that tab is in another Chrome profile: return it from there');
         return done(this.handoffs.returned(h.handoffId, (x) => this.targets.get(x.targetId)?.url ?? ''));
       }
       if (op === 'closeTabs') {
         const tabs = [...this.targets.values()].filter((t) => t.owner === principal);
-        for (const t of tabs) await link.call('tabs.close', { tabId: t.tabId }).catch(() => {});
+        for (const t of tabs) await this.#tabCall(t.tabId, 'tabs.close').catch(() => {});
         return done(true);
       }
       if (op === 'revoke') {
@@ -458,13 +666,17 @@ export class Relay {
     }
   }
 
-  /** Tell the extension which hand-offs wait for the user (its badge and popup). */
+  /** Tell each profile's extension which of its own tabs' hand-offs wait for the user (its badge and popup). */
   #syncHandoffs() {
-    const link = this.ext;
-    if (!link) return;
-    // the popup shows these: masked like everything else the extension's UI shows
-    const items = this.handoffs.waiting().map((h) => ({ ...h, reason: this.activity.redactText(h.reason), title: this.activity.redactText((this.byTab.get(h.tabId)?.title ?? '').slice(0, 300)) }));
-    link.call('handoff.sync', { items }).catch(() => {});
+    const waiting = this.handoffs.waiting();
+    for (const slot of this.slots.values()) {
+      if (!slot.ext) continue;
+      // the popup shows these: masked like everything else the extension's UI shows
+      const items = waiting.filter((h) => this.tabSlot.get(h.tabId) === slot && slot.toExt.has(h.tabId)).map((h) => ({ ...h,
+        tabId: /** @type {number} */ (slot.toExt.get(h.tabId)), reason: this.activity.redactText(h.reason),
+        title: this.activity.redactText((this.byTab.get(h.tabId)?.title ?? '').slice(0, 300)) }));
+      slot.ext.call('handoff.sync', { items }).catch(() => {});
+    }
     this.#pushState();
   }
 
@@ -490,93 +702,102 @@ export class Relay {
 
   // ---------- extension side ----------
 
-  /** Reconcile targets with what this extension really has, then make link the ready one. A newer connection
-   * supersedes this one at any await; this one then closes itself without committing. @param {ExtensionLink} link */
+  /** Reconcile its profile's targets with what this extension really has, then make link that profile's ready one. A
+   * newer connection of the same profile supersedes this one at any await; this one then closes itself without
+   * committing. Other profiles are not touched. @param {ExtensionLink} link */
   async extConnected(link) {
-    const epoch = ++this.epoch;
-    if (this.candidate && this.candidate !== link) this.candidate.close('was superseded by a newer connection');
-    this.candidate = link;
-    this.buffered = [];
-    if (this.ext) {
-      const old = this.ext;
-      this.ext = null;
+    const slot = this.#slotOf(link);
+    const epoch = ++slot.epoch;
+    if (slot.candidate && slot.candidate !== link) slot.candidate.close('was superseded by a newer connection');
+    slot.candidate = link;
+    slot.buffered = [];
+    if (slot.ext) {
+      const old = slot.ext;
+      slot.ext = null;
       old.close('was replaced by a new connection');
-      this.#dropAllSessions();
+      this.#dropSessions(slot);
     }
-    this.attached.clear();
-    const stale = () => this.epoch !== epoch || link.closed;
+    for (const id of slot.toExt.keys()) this.attached.delete(id);
+    const stale = () => slot.epoch !== epoch || link.closed || this.slots.get(slot.id) !== slot;
+    const mine = () => [...this.targets.values()].filter((t) => t.slot === slot);
+    const ext = (/** @type {number} */ id) => /** @type {number} */ (slot.toExt.get(id));
     try {
-      if (link.bootId !== this.bootId) {
+      if (link.bootId !== slot.bootId) {
         // Another extension lifetime (browser restart, extension reload/update) or the first link: tab ids may
-        // have been reused, so nothing old is ours any more.
-        if (this.bootId !== null) this.handoffs.invalidate(() => true, 'the extension restarted');
-        for (const tabId of [...this.byTab.keys()]) this.#targetGone(tabId);
-        this.windowId = null; // window ids are per lifetime too
-        // Removal records belong to the old lifetime (its tab ids may be reused now): drop them, and advance the epoch
-        // so adoption work still in flight from the old lifetime gives up.
-        this.tabGen.clear();
-        this.tabGenEpoch += 1;
-        this.pendingAdopt.clear();
-        this.early.clear();
-      } else if (this.byTab.size) {
-        const alive = await link.call('tabs.alive', { tabIds: [...this.byTab.keys()] });
+        // have been reused, so nothing old of this profile is ours any more.
+        if (slot.bootId !== null) this.handoffs.invalidate((h) => this.tabSlot.get(h.tabId) === slot, 'the extension restarted');
+        for (const t of mine()) this.#targetGone(t.tabId);
+        slot.windowId = null; // window ids are per lifetime too
+        // Its tab ids may name other pages now: new bridge ids from here on, so work still in flight from the old
+        // lifetime (an adoption, a create) can never land on a new page.
+        for (const id of slot.toExt.keys()) { this.pendingAdopt.delete(id); this.early.delete(id); }
+        this.#forgetTabIds(slot);
+      } else if (mine().length) {
+        const alive = await link.call('tabs.alive', { tabIds: mine().map((t) => ext(t.tabId)) });
         if (stale()) return;
-        for (const [tabId, t] of [...this.byTab]) {
-          if (alive?.[String(tabId)] !== t.targetId) this.#targetGone(tabId); // gone, or the id now names another page
+        for (const t of mine()) {
+          if (alive?.[String(ext(t.tabId))] !== t.targetId) this.#targetGone(t.tabId); // gone, or the id now names another page
         }
       }
       // own.sync sets the extension's owned set first, then reports owned tabs that no longer exist: a tab closing
       // after that is reported as tab.removed (buffered below), so nothing falls between the two.
-      const synced = await link.call('own.sync', { tabIds: [...this.byTab.keys()] });
+      const synced = await link.call('own.sync', { tabIds: mine().map((t) => ext(t.tabId)) });
       if (stale()) return;
-      for (const tabId of synced?.missing ?? []) this.#targetGone(tabId);
-      this.bootId = link.bootId;
-      this.ext = link;
-      this.candidate = null;
+      for (const id of synced?.missing ?? []) if (Number.isInteger(id)) this.#targetGone(this.#bridgeTab(slot, id));
+      slot.bootId = link.bootId;
+      slot.ext = link;
+      slot.candidate = null;
       this.#syncHandoffs();
-      const buffered = this.buffered;
-      this.buffered = [];
-      for (const msg of buffered) this.#apply(link, msg);
+      const buffered = slot.buffered;
+      slot.buffered = [];
+      for (const msg of buffered) this.#apply(slot, link, msg);
     } catch (e) {
       this.log(`k-browser: extension reconciliation failed (${e instanceof Error ? e.constructor.name : 'error'})`);
-      if (this.candidate === link) this.candidate = null;
+      if (slot.candidate === link) slot.candidate = null;
       link.close('failed to reconcile');
     } finally {
-      if (stale() && this.ext !== link) link.close('was superseded by a newer connection');
+      if (stale() && slot.ext !== link) link.close('was superseded by a newer connection');
     }
   }
 
   /** @param {ExtensionLink} link */
   extDisconnected(link) {
     link.close('disconnected');
-    if (this.candidate === link) this.candidate = null;
-    if (this.ext !== link) return;
-    this.ext = null;
-    this.activity.panel = null; // a reconnecting extension says again whether a panel is open
-    this.attached.clear();
-    this.#dropAllSessions();
+    const slot = this.slots.get(link.profile.id);
+    if (!slot) return;
+    if (slot.candidate === link) slot.candidate = null;
+    if (slot.ext !== link) return;
+    slot.ext = null;
+    this.#panelClose(slot); // a reconnecting extension says again whether a panel is open
+    for (const id of slot.toExt.keys()) this.attached.delete(id);
+    this.#dropSessions(slot);
+    this.#pushState();
   }
 
-  #dropAllSessions() {
-    this.observe.newGeneration();
+  /** Every session on a profile's tabs ends (its extension went away); other profiles' sessions stay. @param {Slot} slot */
+  #dropSessions(slot) {
+    this.observe.newGeneration(mineIds(this.targets, slot));
     for (const conn of this.conns) {
-      for (const [sid, s] of conn.sessions) {
+      for (const [sid, s] of [...conn.sessions]) {
+        if (this.tabSlot.get(s.tabId) !== slot) continue;
         if (s.child === null) conn.emit('Target.detachedFromTarget', { sessionId: sid, targetId: this.byTab.get(s.tabId)?.targetId ?? '' });
+        conn.sessions.delete(sid);
       }
-      conn.sessions.clear();
     }
   }
 
   /** Called synchronously by the extension reader, so debugger events keep their order. Never awaits an extension
    * call itself: adoption needs one, so it runs detached. @param {ExtensionLink} link @param {Record<string, any>} msg */
   extEvent(link, msg) {
-    if (link === this.ext) this.#apply(link, msg);
-    else if (link === this.candidate && BUFFERED.has(msg.ev)) this.buffered.push(msg); // no sessions exist yet for debugger events; no commands
+    const slot = this.slots.get(link.profile.id);
+    if (!slot) return;
+    if (link === slot.ext) this.#apply(slot, link, this.#inbound(slot, msg));
+    else if (link === slot.candidate && BUFFERED.has(msg.ev)) slot.buffered.push(this.#inbound(slot, msg)); // no sessions exist yet for debugger events; no commands
     // anything else comes from a replaced link and is dropped
   }
 
-  /** @param {ExtensionLink} link @param {Record<string, any>} msg */
-  #apply(link, msg) {
+  /** An event with the bridge's tab ids. @param {Slot} slot @param {ExtensionLink} link @param {Record<string, any>} msg */
+  #apply(slot, link, msg) {
     switch (msg.ev) {
       case 'dbg.event':
         this.#debuggerEvent(msg.tabId, msg.sessionId ?? null, msg.method, msg.params ?? {});
@@ -585,15 +806,15 @@ export class Relay {
         this.#debuggerDetached(msg.tabId);
         break;
       case 'tab.created':
-        this.#spawn(this.#adopt(link, msg.tabId, msg.openerTabId ?? null));
+        this.#spawn(this.#adopt(slot, link, msg.tabId, msg.openerTabId ?? null));
         break;
       case 'tab.replaced': {
         this.#bump(msg.removedTabId);
         const old = this.byTab.get(msg.removedTabId);
         const adopting = this.pendingAdopt.get(msg.removedTabId); // replaced before its adoption finished
         this.#targetGone(msg.removedTabId);
-        if (old) this.#spawn(this.#adopt(link, msg.addedTabId, null, old.owner, old.targetId));
-        else if (adopting) this.#spawn(this.#adopt(link, msg.addedTabId, null, adopting.owner, adopting.openerId));
+        if (old) this.#spawn(this.#adopt(slot, link, msg.addedTabId, null, old.owner, old.targetId));
+        else if (adopting) this.#spawn(this.#adopt(slot, link, msg.addedTabId, null, adopting.owner, adopting.openerId));
         break;
       }
       case 'tab.updated': {
@@ -627,17 +848,19 @@ export class Relay {
         this.#bump(msg.tabId);
         this.#targetGone(msg.tabId);
         break;
-      case 'handoff.return': // the user pressed Return (交還) in the extension popup
-        this.handoffs.returned(msg.handoffId, (h) => this.targets.get(h.targetId)?.url ?? '');
+      case 'handoff.return': { // the user pressed Return (交還) in the extension popup: of this profile's own tabs only
+        const h = [...this.handoffs.items.values()].find((x) => x.handoffId === msg.handoffId);
+        if (h && this.tabSlot.get(h.tabId) === slot) this.handoffs.returned(msg.handoffId, (x) => this.targets.get(x.targetId)?.url ?? '');
         break;
+      }
       case 'panel.open':
-        this.#panelOpen(link);
+        this.#panelOpen(slot, link);
         break;
       case 'panel.close':
-        this.activity.panel = null;
+        this.#panelClose(slot);
         break;
       case 'panel.cmd': // only ever from the current, reconciled link (extEvent)
-        this.#spawn(this.#panelCmd(link, msg));
+        this.#spawn(this.#panelCmd(slot, msg));
         break;
     }
   }
@@ -694,21 +917,24 @@ export class Relay {
   }
 
   /** A popup / new tab opened from an owned tab joins its opener's owner. Nothing else is adopted.
-   * @param {ExtensionLink} link @param {number} tabId @param {number | null} openerTab @param {string | null} [owner] @param {string | null} [openerId] */
-  async #adopt(link, tabId, openerTab, owner = null, openerId = null) {
+   * Both tab ids are the bridge's, given within this profile, so an opener is only ever one of its own tabs.
+   * @param {Slot} slot @param {ExtensionLink} link @param {number} tabId @param {number | null} openerTab @param {string | null} [owner] @param {string | null} [openerId] */
+  async #adopt(slot, link, tabId, openerTab, owner = null, openerId = null) {
     if (owner === null) {
       const opener = openerTab === null ? undefined : this.byTab.get(openerTab);
-      if (!opener) return;
+      if (!opener || opener.slot !== slot) return;
       owner = opener.owner;
       openerId = opener.targetId;
     }
-    if (this.byTab.has(tabId) || this.ext !== link) return;
+    if (this.byTab.has(tabId) || slot.ext !== link) return;
+    const extId = slot.toExt.get(tabId);
+    if (extId === undefined) return;
     const stamp = this.#tabStamp(tabId);
     this.pendingAdopt.set(tabId, { owner, openerId });
     this.stats.adoptionsStarted += 1;
     let info;
     try {
-      info = await link.call('tabs.get', { tabId });
+      info = await link.call('tabs.get', { tabId: extId });
     } catch (e) {
       if (isExpected(e)) return;
       throw e;
@@ -717,24 +943,25 @@ export class Relay {
     }
     // The link was replaced (tab ids may now mean other pages), createTarget registered it, or the tab went away
     // while the answer was in flight.
-    if (this.ext !== link || this.byTab.has(tabId) || !this.#sameTab(tabId, stamp)) return;
-    const adopted = new Target(info.targetId, tabId, owner, info.url ?? '', info.title ?? '', openerId);
+    if (slot.ext !== link || this.byTab.has(tabId) || !this.#sameTab(tabId, stamp) || slot.toExt.get(tabId) !== extId) return;
+    const adopted = new Target(info.targetId, tabId, owner, info.url ?? '', info.title ?? '', openerId, slot);
     if (typeof info.active === 'boolean') adopted.active = info.active;
-    await this.#register(link, adopted);
+    await this.#register(slot, link, adopted);
   }
 
-  /** Returns whether t is still registered afterwards. @param {ExtensionLink} link @param {Target} t */
-  async #register(link, t) {
-    if (this.ext !== link) return false;
+  /** Returns whether t is still registered afterwards. @param {Slot} slot @param {ExtensionLink} link @param {Target} t */
+  async #register(slot, link, t) {
+    const extId = slot.toExt.get(t.tabId);
+    if (slot.ext !== link || extId === undefined) return false;
     this.targets.set(t.targetId, t);
     this.byTab.set(t.tabId, t);
     try {
-      await link.call('own', { tabId: t.tabId, owned: true });
+      await link.call('own', { tabId: extId, owned: true });
     } catch (e) {
       if (!isExpected(e)) throw e; // a replaced link: the next reconciliation re-checks this target by targetId
     }
     // Cleared while we waited (new lifetime, tab closed): never announce a target that no longer exists.
-    if (this.ext !== link || this.targets.get(t.targetId) !== t) return false;
+    if (slot.ext !== link || this.targets.get(t.targetId) !== t) return false;
     this.#broadcastTarget(t.owner, 'Target.targetCreated', { targetInfo: t.info(false) });
     return true;
   }
@@ -780,10 +1007,15 @@ export class Relay {
     }
   }
 
-  /** @param {string} why */
+  /** Every profile's links (a rotated pairing key). @param {string} why */
   dropExtension(why) {
-    for (const link of [this.ext, this.candidate]) if (link) this.extDisconnected(link);
+    for (const slot of this.slots.values()) for (const link of [slot.ext, slot.candidate]) if (link) this.extDisconnected(link);
     this.log(`k-browser: extension link dropped: ${why}`);
+  }
+
+  /** Every link, ready or being reconciled (the bridge checks their pairing key). */
+  links() {
+    return [...this.slots.values()].flatMap((s) => [s.ext, s.candidate]).filter((l) => l !== null);
   }
 
   /** @param {CdpConn} conn @param {string} raw */
@@ -813,7 +1045,7 @@ export class Relay {
       outcome = e instanceof CdpError && e.refused ? 'refused' : 'error';
       if (e instanceof CdpError) reply = { id: msg.id, error: { code: e.code, message: e.message } };
       else if (e instanceof ExtensionOffline) {
-        const hint = this.candidate ? 'the extension is reconnecting' : 'Open Chrome with the K-Browser extension, then run `k-browser doctor`';
+        const hint = /** @type {any} */ (e).reconnecting || (!this.slots.size && this.candidate) ? 'the extension is reconnecting' : 'Open Chrome with the K-Browser extension, then run `k-browser doctor`';
         reply = { id: msg.id, error: { code: -32000, message: `${e.message}. ${hint}.` } };
       } else if (e instanceof ExtensionError || e instanceof ResultUnknown) reply = { id: msg.id, error: { code: -32000, message: e.message } };
       else {
@@ -838,7 +1070,7 @@ export class Relay {
     if (method === 'KBrowser.setFileInput') return this.#setFileInput(conn, s, params);
     const denied = policy.check(method, params);
     if (denied) throw new CdpError(denied, -32000, { refused: true });
-    const result = await this.#ext().call('dbg.send', { tabId: s.tabId, sessionId: s.child, method, params });
+    const result = await this.#tabCall(s.tabId, 'dbg.send', { sessionId: s.child, method, params });
     // The observation log follows what the session really has on (never switched on by the bridge itself).
     const t = this.byTab.get(s.tabId);
     if (t && conn.sessions.get(sid) === s) {
@@ -862,7 +1094,7 @@ export class Relay {
     } catch (e) {
       throw new CdpError(e instanceof Error ? e.message : String(e), -32000, { refused: true });
     }
-    return this.#ext().call('dbg.send', { tabId: s.tabId, sessionId: s.child, method: 'DOM.setFileInputFiles',
+    return this.#tabCall(s.tabId, 'dbg.send', { sessionId: s.child, method: 'DOM.setFileInputFiles',
       params: { files: [file], backendNodeId: p.backendNodeId } });
   }
 
@@ -873,16 +1105,11 @@ export class Relay {
     return t;
   }
 
-  #ext() {
-    if (!this.ext) throw new ExtensionOffline('K-Browser extension is not connected');
-    return this.ext;
-  }
-
   /** Close a tab; from the moment it is asked, no hand-off starts on it (set before the first await). @param {Target} t */
   async #close(t) {
     t.closing = true;
     try {
-      await this.#ext().call('tabs.close', { tabId: t.tabId });
+      await this.#tabCall(t.tabId, 'tabs.close');
     } catch (e) {
       t.closing = false;
       throw e;
@@ -893,7 +1120,7 @@ export class Relay {
   async #browserCommand(conn, method, p) {
     switch (method) {
       case 'Browser.getVersion': {
-        const hello = this.ext?.hello ?? {};
+        const hello = this.ext?.hello ?? {}; // the default profile's (else any connected one's)
         return { protocolVersion: '1.3', product: hello.product ?? 'Chrome', revision: '', userAgent: hello.userAgent ?? '', jsVersion: '' };
       }
       case 'Target.getTargets':
@@ -918,7 +1145,7 @@ export class Relay {
       }
       case 'Target.activateTarget': {
         const t = this.#owned(conn, p.targetId);
-        await this.#ext().call('tabs.activate', { tabId: t.tabId });
+        await this.#tabCall(t.tabId, 'tabs.activate');
         return {};
       }
       case 'Target.attachToTarget':
@@ -977,11 +1204,14 @@ export class Relay {
         return { ...nav, url: nav.url || t.url };
       }
       case 'Target.getBrowserContexts':
-        return { browserContextIds: [] };
+        // one per paired Chrome profile (every client may use every profile)
+        return { browserContextIds: this.registry.profiles.map((x) => x.context) };
+      case 'KBrowser.profiles':
+        return { profiles: this.profiles() };
       case 'Target.createBrowserContext':
-        throw new CdpError("K-Browser cannot create isolated browser contexts: tabs share the user's Chrome profile");
+        throw new CdpError("K-Browser cannot create isolated browser contexts: each is one of the user's Chrome profiles");
       case 'Target.disposeBrowserContext':
-        throw new CdpError('K-Browser has no isolated browser contexts');
+        throw new CdpError("K-Browser's browser contexts are the user's Chrome profiles: they are not disposed of by clients");
       // Browser-level Target.setAutoAttach is deliberately absent: it would have to succeed without doing anything.
       // New targets are announced through setDiscoverTargets; child frames through session-level setAutoAttach.
       default:
@@ -999,8 +1229,8 @@ export class Relay {
   async #mark(conn, p) {
     const t = this.#owned(conn, p.targetId);
     if (p.label !== undefined && typeof p.label !== 'string') throw new CdpError('label must be a string');
-    if (this.ext && this.attached.has(t.tabId)) {
-      await this.ext.call('dbg.send', { tabId: t.tabId, sessionId: null, method: 'Page.getFrameTree', params: {} }).catch(() => {});
+    if (t.slot?.ext && this.attached.has(t.tabId)) {
+      await this.#tabCall(t.tabId, 'dbg.send', { sessionId: null, method: 'Page.getFrameTree', params: {} }).catch(() => {});
     }
     if (this.targets.get(t.targetId) !== t) throw new CdpError(`No target with given id found: ${t.targetId}`);
     const m = this.observe.mark(conn.client, t.targetId, p.label ?? '');
@@ -1009,59 +1239,85 @@ export class Relay {
   }
 
   /** @param {CdpConn} conn @param {Record<string, any>} p */
-  async #createTarget(conn, p) {
-    if (p.browserContextId && p.browserContextId !== DEFAULT_CONTEXT) {
-      throw new CdpError("K-Browser has no isolated browser contexts: tabs share the user's Chrome profile");
+  /** The profile a new tab goes to: the one whose context the client named, else the default. @param {unknown} context */
+  #slotForContext(context) {
+    // not given: the default profile. DEFAULT_CONTEXT is what clients of K-Browser before 0.6.0 were told: it names the
+    // profile paired then (profiles.js LEGACY_CONTEXT), for good, never whichever is the default now
+    const id = context === undefined || context === null || context === '' ? this.registry.default ?? null
+      : context === DEFAULT_CONTEXT ? LEGACY_CONTEXT : context;
+    if (typeof id !== 'string' && id !== null) throw new CdpError('browserContextId must be a string');
+    if (id !== null && this.registry.retiredContexts.includes(id)) {
+      throw new CdpError(`browser context ${id} is a Chrome profile that was removed from K-Browser (profile_removed)`);
     }
+    if (id === null) {
+      // no registry yet (an older pairing, tests): the one connected profile
+      const only = [...this.slots.values()];
+      if (only.length) return only.find((x) => x.ext) ?? only[0];
+      throw new ExtensionOffline('K-Browser extension is not connected');
+    }
+    const p = this.registry.profiles.find((x) => x.context === id);
+    if (!p) throw new CdpError(`no browser context ${JSON.stringify(id)}: see Target.getBrowserContexts (or KBrowser.profiles)`);
+    const slot = this.slots.get(p.id);
+    if (!slot || slot.context !== p.context) {
+      throw new ExtensionOffline(`the K-Browser extension in the Chrome profile "${p.name}" is not connected`);
+    }
+    return slot;
+  }
+
+  /** @param {CdpConn} conn @param {Record<string, any>} p */
+  async #createTarget(conn, p) {
+    const slot = this.#slotForContext(p.browserContextId);
     const url = p.url || 'about:blank';
     const bad = policy.checkUrl(url);
     if (bad) throw new CdpError(bad);
-    const link = this.#ext();
-    const epoch = this.tabGenEpoch;
-    // One K-Browser window: "is it there / create it / publish its id" runs one at a time, or two first tabs created
-    // at once would open two windows. Everything else about tabs stays concurrent.
-    const r = await this.windowLock.run(async () => {
+    const link = this.#linkOf(slot);
+    // One K-Browser window per profile: "is it there / create it / publish its id" runs one at a time, or two first
+    // tabs created at once would open two windows. Everything else about tabs stays concurrent.
+    const r = await slot.windowLock.run(async () => {
       // It may have gone stale while waiting for the lock: then no tab is opened that nobody would register.
-      if (conn.closed || !this.conns.has(conn) || this.ext !== link) {
+      if (conn.closed || !this.conns.has(conn) || slot.ext !== link) {
         throw new CdpError('this client was closed (or the extension reconnected) before the tab was created; no tab was opened');
       }
-      const answer = await link.call('tabs.create', { url, active: !p.background, windowId: this.windowId });
-      if (this.ext === link) this.windowId = answer.windowId ?? this.windowId;
+      const answer = await link.call('tabs.create', { url, active: !p.background, windowId: slot.windowId });
+      if (slot.ext === link) slot.windowId = answer.windowId ?? slot.windowId;
       return answer;
     });
-    if (this.ext !== link || conn.closed) {
+    if (slot.ext !== link || conn.closed || !Number.isInteger(r?.tabId)) {
       throw new ResultUnknown('the extension reconnected (or this client was closed) while the tab was being created: '
         + 'the tab may exist but is not registered; not retried');
     }
+    const tabId = this.#bridgeTab(slot, r.tabId);
     // The new tab's id was unknown before the answer, so any removal recorded for it means it is already gone.
-    if (epoch !== this.tabGenEpoch || this.tabGen.has(r.tabId)) {
+    if (this.tabGen.has(tabId)) {
       throw new ResultUnknown('the new tab was closed before it could be registered; not retried');
     }
-    let t = this.byTab.get(r.tabId);
+    let t = this.byTab.get(tabId);
     if (!t) {
-      t = new Target(r.targetId, r.tabId, conn.client, r.url ?? '', r.title ?? '');
+      t = new Target(r.targetId, tabId, conn.client, r.url ?? '', r.title ?? '', null, slot);
       if (typeof r.active === 'boolean') t.active = r.active;
       // updates the extension sent once the tab was owned, before this point: they are no older than the answer
-      const early = this.early.get(r.tabId);
-      this.early.delete(r.tabId);
+      const early = this.early.get(tabId);
+      this.early.delete(tabId);
       if (early) {
         if (early.url !== undefined) t.url = early.url;
         if (early.title !== undefined) t.title = early.title;
         if (early.active !== undefined) t.active = early.active;
       }
-      if (!await this.#register(link, t)) {
+      if (!await this.#register(slot, link, t)) {
         throw new ResultUnknown('the tab went away (or the extension reconnected) while it was being registered; not retried');
       }
     }
-    return { targetId: t.targetId };
+    // which profile it opened in, in the same answer: a client never has to ask again (and fail to)
+    return { targetId: t.targetId, browserContextId: t.slot?.context ?? DEFAULT_CONTEXT };
   }
 
   /** @param {CdpConn} conn @param {Record<string, any>} p */
   async #attach(conn, p) {
     if (!p.flatten) throw new CdpError('K-Browser supports only flattened sessions (attachToTarget with flatten: true)');
     const t = this.#owned(conn, p.targetId);
-    const link = this.#ext();
-    const valid = () => this.ext === link && this.targets.get(t.targetId) === t && !conn.closed && this.conns.has(conn);
+    const { slot, ext } = this.#where(t.tabId);
+    const link = this.#linkOf(slot);
+    const valid = () => slot.ext === link && slot.toExt.get(t.tabId) === ext && this.targets.get(t.targetId) === t && !conn.closed && this.conns.has(conn);
     /** @type {{ sid: string } | { gone: true } | { focusFailed: string }} */
     const outcome = await this.lock.run(async () => {
       if (!valid()) return { gone: true }; // it may have gone stale while waiting for the lock: then Chrome is not touched
@@ -1070,7 +1326,7 @@ export class Relay {
         throw new CdpError(`target ${t.targetId} already has an operating session${holder.conn === conn ? ' on this connection' : ''}; K-Browser v0 allows one per target`);
       }
       if (!this.attached.has(t.tabId)) {
-        await link.call('dbg.attach', { tabId: t.tabId });
+        await link.call('dbg.attach', { tabId: ext });
         this.attached.add(t.tabId);
         this.observe.attached(t.targetId, t.owner);
       }
@@ -1081,7 +1337,7 @@ export class Relay {
       // a client may turn it off, and gets it back on its next root attach. If it cannot be set, the attach fails:
       // a session that silently cannot take input would be worse.
       try {
-        await link.call('dbg.send', { tabId: t.tabId, sessionId: null, method: 'Emulation.setFocusEmulationEnabled', params: { enabled: true } });
+        await link.call('dbg.send', { tabId: ext, sessionId: null, method: 'Emulation.setFocusEmulationEnabled', params: { enabled: true } });
       } catch (e) {
         if (!isExpected(e)) throw e;
         return { focusFailed: e instanceof Error ? e.message : String(e) };
@@ -1139,10 +1395,10 @@ export class Relay {
    * in Chrome, and the 'being debugged' bar goes away. @param {number} tabId */
   async #maybeDetach(tabId) {
     await this.lock.run(async () => {
-      if (this.attached.has(tabId) && !this.#hasSessions(tabId) && this.ext) {
+      if (this.attached.has(tabId) && !this.#hasSessions(tabId)) {
         this.attached.delete(tabId);
         try {
-          await this.ext.call('dbg.detach', { tabId });
+          await this.#tabCall(tabId, 'dbg.detach');
         } catch (e) {
           if (!isExpected(e)) throw e;
         }

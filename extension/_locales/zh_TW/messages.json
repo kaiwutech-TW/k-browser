@@ -213,7 +213,7 @@
     "message": "eval:關(要開請在終端機執行 k-browser client set {0} --eval on)"
   },
   "settingsApply": {
-    "message": "封鎖、截圖、eval 的變更,要等這個程式重新啟動(或重新連接它的 k-browser MCP)才生效。"
+    "message": "封鎖、截圖、eval 的變更，從這個程式下一次呼叫 K-Browser 起生效(K-Browser 0.5.0 之前就連著的 agent,要重新連接一次它的 k-browser MCP)。"
   },
   "current": {
     "message": "目前:{0}"
@@ -310,5 +310,23 @@
   },
   "cat_passwords": {
     "message": "密碼管理器"
+  },
+  "popupNameLabel": {
+    "message": "這個 Chrome 設定檔的名稱"
+  },
+  "popupNameHint": {
+    "message": "讓 agent 分得出你的設定檔，例如「工作」「個人」(第一個可以留空)。"
+  },
+  "popupProfile": {
+    "message": "Chrome 設定檔:{0}"
+  },
+  "panelProfile": {
+    "message": "設定檔 {0}"
+  },
+  "panelReturnElsewhere": {
+    "message": "請在設定檔「{0}」的 K-Browser 小視窗交還"
+  },
+  "panelProfiles": {
+    "message": "設定檔"
   }
 }

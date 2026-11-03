@@ -40,9 +40,12 @@ const nextMessage = (ws) => new Promise((resolve) => {
 
 /** Speaks the extension side of the wire protocol over a fake set of tabs. */
 export class FakeExtension {
-  /** @param {string} base @param {string} key @param {{ profile?: string, boot?: string, origin?: string }} [o] */
-  constructor(base, key, { profile = 'profile-aaaaaaaa', boot = 'boot-aaaaaaaa', origin = ORIGIN } = {}) {
+  /** pairing: as if the user had just pressed Pair in the popup (a profile not yet on the bridge's list joins only so);
+   * profileName: the name typed there.
+   * @param {string} base @param {string} key @param {{ profile?: string, boot?: string, origin?: string, pairing?: boolean, profileName?: string }} [o] */
+  constructor(base, key, { profile = 'profile-aaaaaaaa', boot = 'boot-aaaaaaaa', origin = ORIGIN, pairing = true, profileName } = {}) {
     this.base = base; this.key = key; this.profile = profile; this.boot = boot; this.origin = origin;
+    this.pairing = pairing; this.profileName = profileName;
     /** @type {Map<number, { targetId: string, url: string, title: string, opener: number | null }>} */
     this.tabs = new Map();
     /** @type {Set<number>} */ this.owned = new Set();
@@ -75,7 +78,8 @@ export class FakeExtension {
     const enonce = 'e'.repeat(8) + '0123456789abcdef';
     const script = transcript(hello.nonce, enonce);
     this.ws.send(JSON.stringify({ t: 'hello', v: PROTOCOL, nonce: enonce, mac: macOverride ?? await mac(this.key, 'ext', script),
-      profileId: this.profile, bootId: this.boot, userAgent: 'FakeChrome', product: 'Chrome/999' }));
+      profileId: this.profile, bootId: this.boot, userAgent: 'FakeChrome', product: 'Chrome/999',
+      ...(this.pairing ? { pairing: true } : {}), ...(this.profileName ? { profileName: this.profileName } : {}) }));
     // The bridge's first command can arrive right behind welcome: install the command handler before awaiting.
     /** @type {any[]} */
     const early = [];
@@ -94,6 +98,7 @@ export class FakeExtension {
     });
     const m = /** @type {any} */ (await welcome);
     if (!m || m.t !== 'welcome') { this.error = m; return false; }
+    this.welcome = m;
     this.bridgeProved = m.mac === await mac(this.key, 'bridge', script);
     this.ws.removeAllListeners('message');
     this.ws.on('message', (d) => {
@@ -161,6 +166,7 @@ export class FakeExtension {
     return true;
   }
   op_tabs_activate() { return true; }
+  /** The bridge renamed this profile. @param {any} a */ op_profile_name({ name }) { this.profileNameNow = name; return true; }
   /** @param {any} a */ op_dbg_attach({ tabId }) { this.attached.add(tabId); return true; }
   /** @param {any} a */ op_dbg_detach({ tabId }) { this.attached.delete(tabId); return true; }
   /** @param {any} a */

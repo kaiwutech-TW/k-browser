@@ -21,6 +21,7 @@
 <body>
   <h1>K-Browser</h1>
   <div id="state" class="state">…</div>
+  <div id="profile" class="muted" hidden></div>
   <button id="panel" data-i18n="popupOpenPanel"></button>
   <div id="handoffs" hidden><strong data-i18n="popupWaiting"></strong><div id="handoff-list"></div></div>
   <!-- shown only while pairing is what is missing (not paired yet, or the bridge refused the code); hidden once
@@ -29,6 +30,9 @@
     <label for="code" data-i18n="popupCodeLabel"></label>
     <div class="muted"><span data-i18n="popupCodeHint"></span> <code>k-browser pair</code></div>
     <input id="code" type="password" autocomplete="off" spellcheck="false">
+    <label for="name" data-i18n="popupNameLabel"></label>
+    <div class="muted" data-i18n="popupNameHint"></div>
+    <input id="name" type="text" maxlength="32" autocomplete="off" spellcheck="false">
     <button id="save" data-i18n="popupPair"></button>
   </div>
   <button id="repair" class="link" hidden data-i18n="popupRepair"></button>

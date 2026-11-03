@@ -107,8 +107,15 @@ k-browser pair
 Paste the code into the K-Browser popup and click **Pair**. The status turns green (**Connected**).
 
 - Wrong code: the status turns red and the field comes back; paste the right one.
-- New code (for example if you think it leaked): `k-browser pair --rotate`. The old one stops working at once.
+- New code (for example if you think it leaked): `k-browser pair --rotate`. The old one stops working at once, in every
+  Chrome profile: paste the new one in each.
 - "Bridge not connected" is not a pairing problem: the bridge is not running. See `k-browser doctor`.
+
+**Several Chrome profiles.** Load the extension in each Chrome profile you want agents to use (work, personal...) and
+paste the **same** code in each. From the second profile on, also give it a name in the popup. Agents then pick one with
+`tabs {action: "open", profile: "work"}` (default: the profile paired first, or `k-browser profile default <name>`);
+`status` and `tabs list` say which profile each tab is in. Every agent can use every paired profile. Manage them with
+`k-browser profile list | rename | remove | default`. A removed profile stays out until you pair it again from its popup.
 
 ### 5. Check
 
@@ -146,7 +153,8 @@ server) and it has the K-Browser tools.
 | Check that everything works | `k-browser doctor` |
 | Restart the bridge (after updating the code) | `k-browser service restart`, then click ↻ for K-Browser in `chrome://extensions` (do not remove it) |
 | List / add / remove clients | `k-browser client list`, `client add <name>`, `client remove <name>` |
-| Let a client use `eval` | `k-browser client set <name> --eval on`, then restart that agent |
+| Let a client use `eval` | `k-browser client set <name> --eval on` (from its next call) |
+| Manage the paired Chrome profiles | `k-browser profile list`, `rename <old> <new>`, `remove <name>`, `default <name>` |
 | Give a CDP program its endpoint | `k-browser endpoint <name>` (the URL contains a token; keep it private) |
 | Manage site notes | `k-browser learnings list / add / remove / export / import` |
 | Remove everything K-Browser registered | `k-browser uninstall` (removes only K-Browser's own entries and tokens) |
@@ -207,7 +215,9 @@ Do not sync this folder to the cloud or share it.
 - **After a bridge restart the agent cannot find its earlier tabs.** On purpose: rather than guess which tabs were whose,
   K-Browser lets them go. Close them by hand.
 - **The agent reports `bridge_version`.** The bridge and the agent's MCP server run different versions. If the bridge is
-  older, run `k-browser service restart`; if the agent is, restart it or reconnect its MCP server.
+  older, run `k-browser service restart`; if the agent is, restart it or reconnect its MCP server. From 0.5.0 on, an
+  agent's MCP server follows updates by itself (after `k-browser service restart`); one started before 0.5.0 needs
+  reconnecting once.
 - **Chrome shows "… started debugging this browser".** That is Chrome's fixed notice when an extension uses the debugger
   API. Pages cannot see it.
 - **Something else.** `k-browser doctor` reports the bridge, the pairing and the extension, and what to do next.
@@ -215,6 +225,7 @@ Do not sync this folder to the cloud or share it.
 ## Limitations
 
 - macOS only for now.
+- Every agent can use every paired Chrome profile; limiting an agent to some profiles is not there yet.
 - The CDP endpoint is a deliberately limited subset (see above), not a general remote-debugging port.
 - Masking is rule-based. Blocking categories and the `untrusted-page-content` wrapper reduce risk; they do not make it
   safe to point an agent at sites you would not trust it with.

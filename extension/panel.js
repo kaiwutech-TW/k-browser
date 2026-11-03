@@ -67,8 +67,20 @@ function entryRow(e) {
   return el('div', text, `entry ${e.outcome}`);
 }
 
+/** This panel's own Chrome profile (its context, from the bridge's welcome): hand-offs are returned in their own profile.
+ * @type {string | null} */
+let myContext = null;
+void Promise.resolve(chrome.storage?.local?.get('profile')).then((r) => { myContext = r?.profile?.context ?? null; render(); }, () => {});
+// paired again (a new context) while the panel stays open
+chrome.storage?.onChanged?.addListener((changes, area) => {
+  if (area === 'local' && changes.profile) { myContext = changes.profile.newValue?.context ?? null; render(); }
+});
+
 function render() {
   clientsEl.replaceChildren();
+  // with more than one Chrome profile paired, every tab says which one it is in
+  const several = (state.about?.profiles?.length ?? 0) > 1;
+  const where = (/** @type {any} */ x) => (several && x.profile ? ` · ${msg('panelProfile', clip(x.profile, 32))}` : '');
   for (const c of state.clients) {
     const box = el('div', undefined, 'client');
     const head = el('div');
@@ -78,12 +90,18 @@ function render() {
 
     for (const h of state.handoffs.filter((x) => x.principal === c.principal)) {
       const hb = el('div', undefined, 'handoff');
-      hb.append(el('div', msg('handoffWaiting', clip(h.reason, MAX.reason))), el('span', msg('tagClient'), 'tag'), el('div', msg('handoffSince', ago(h.since)), 'muted'));
+      hb.append(el('div', msg('handoffWaiting', clip(h.reason, MAX.reason))), el('span', msg('tagClient'), 'tag'),
+        el('div', `${msg('handoffSince', ago(h.since))}${where(h)}`, 'muted'));
       const show = el('button', msg('btnShow'), 'small');
       show.addEventListener('click', () => send({ op: 'show', principal: c.principal, targetId: h.targetId }));
-      const back = el('button', msg('btnReturn'), 'primary small');
-      back.addEventListener('click', () => send({ op: 'return', principal: c.principal, handoffId: h.handoffId }));
-      hb.append(show, back);
+      hb.append(show);
+      if (!h.context || !myContext || h.context === myContext) {
+        const back = el('button', msg('btnReturn'), 'primary small');
+        back.addEventListener('click', () => send({ op: 'return', principal: c.principal, handoffId: h.handoffId }));
+        hb.append(back);
+      } else {
+        hb.append(el('div', msg('panelReturnElsewhere', clip(h.profile ?? '?', 32)), 'muted'));
+      }
       box.append(hb);
     }
 
@@ -91,7 +109,7 @@ function render() {
     if (tabs.length) box.append(el('h2', msg('tabsHeading', tabs.length)));
     for (const t of tabs) {
       const row = el('div', undefined, 'tab');
-      row.append(el('div', `${clip(t.title || msg('untitled'), MAX.title)}${t.openedBy ? msg('openedByPopup') : ''}${t.background ? msg('backgroundTab') : ''}`), el('div', clip(t.url, MAX.url), 'url'));
+      row.append(el('div', `${clip(t.title || msg('untitled'), MAX.title)}${t.openedBy ? msg('openedByPopup') : ''}${t.background ? msg('backgroundTab') : ''}${where(t)}`), el('div', clip(t.url, MAX.url), 'url'));
       row.addEventListener('click', () => send({ op: 'show', principal: c.principal, targetId: t.targetId }));
       box.append(row);
     }
@@ -119,7 +137,8 @@ function render() {
   if (!state.clients.length) clientsEl.append(el('div', msg('noClients'), 'muted'));
 
   const a = state.about;
-  aboutEl.textContent = a ? msg('about', clip(a.version, 20), clip(a.extension ?? '?', 20), msg(a.launchd ? 'startedLaunchd' : 'startedManual'), onOff(a.decisionLog)) : '';
+  aboutEl.textContent = a ? msg('about', clip(a.version, 20), clip(a.extension ?? '?', 20), msg(a.launchd ? 'startedLaunchd' : 'startedManual'), onOff(a.decisionLog))
+    + (several ? ` · ${msg('panelProfiles')}: ${a.profiles.map((/** @type {any} */ p) => `${clip(p.name, 32)} ${p.online ? '●' : '○'} ${clip(p.version ?? '', 20)}`.trim()).join(', ')}` : '') : '';
   configuredEl.replaceChildren();
   for (const c of state.configured ?? []) {
     const row = el('div', undefined, 'cfg');

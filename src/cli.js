@@ -11,10 +11,12 @@ import * as auth from './auth.js';
 import * as decisions from './decisions.js';
 import * as learnings from './learnings.js';
 import * as model from './model.js';
+import * as profiles from './profiles.js';
 import { redactor } from './redact.js';
 import { install, InstallError, restore } from './install.js';
 import { LABEL, probePort, rotateLogs, ServiceError, serviceInstall, serviceRestart, serviceStatus, serviceUninstall } from './launchd.js';
 import { serveMcp } from './mcp/server.js';
+import { runShim } from './mcp/shim.js';
 import { CATEGORIES } from './sites.js';
 import { DEFAULT_PORT, startBridge } from './server.js';
 import { EXTENSION_ID, VERSION } from './version.js';
@@ -27,11 +29,14 @@ const endpoint = (port, token) => `http://127.0.0.1:${port}/c/${token}`;
 const USAGE = `usage: k-browser [--port N] <command>
 
   bridge                 run the bridge in the foreground
-  pair [--rotate]        show (or rotate) the extension pairing code
+  pair [--rotate]        show (or rotate) the extension pairing code (one code for every Chrome profile)
+  profile list | rename <old> <new> | remove <name> | default <name>
+                         the Chrome profiles paired with this bridge
   client add|remove|list [name]   named client tokens (one per agent / program)
   client set <name> --eval on|off   let that client use the eval tool (off by default)
   endpoint <name>        print a client's CDP endpoint (for KFW_CDP etc.)
-  mcp --client <name>    MCP server on stdio (the token is read from the client's file)
+  mcp --client <name>    MCP server on stdio (the token is read from the client's file); it follows updates and
+                         changes to the client without the agent reconnecting
   install [--dry-run] [--client claude-code|codex|antigravity|gemini-cli|all] [--block banking,email,...|""] [--no-service]
           [--kav <dir>|none] [--model kev|off|jev [--consent] [key options as for model jev]]
                          register K-Browser with your agents (each gets its own token); for all of them (the default)
@@ -63,8 +68,10 @@ export async function main(argv) {
   const [cmd, ...rest] = args;
   switch (cmd) {
     case 'bridge': {
-      const b = await startBridge({ port });
-      console.error(`k-browser bridge ${VERSION} on 127.0.0.1:${b.port}`);
+      // under launchd stderr is bridge.err.log: each line says when
+      const log = (/** @type {string} */ line) => console.error(`${new Date().toISOString()} ${line}`);
+      const b = await startBridge({ port, log });
+      log(`k-browser bridge ${VERSION} on 127.0.0.1:${b.port}`);
       rotateLogs();
       setInterval(rotateLogs, 3600e3).unref(); // a bridge runs for weeks under launchd
       const stop = () => void b.close().then(() => process.exit(0));
@@ -75,10 +82,40 @@ export async function main(argv) {
     case 'pair': {
       const rotate = rest.includes('--rotate');
       const key = auth.pairKey({ create: true, rotate });
-      if (rotate) fs.rmSync(auth.profileFile(), { force: true }); // the next profile to pair becomes the one
       console.log(`Pairing code (paste into the K-Browser extension popup):\n\n  ${key}\n`);
-      if (rotate) console.log('The old code no longer works and the connected extension is dropped: paste the new code to reconnect.');
+      console.log('The same code pairs every Chrome profile you use K-Browser in: in each, paste it and give that profile a name.');
+      if (rotate) console.log('The old code no longer works and every connected profile is dropped: paste the new code in each to reconnect.');
       return 0;
+    }
+    case 'profile': {
+      const [action, a, b] = rest;
+      try {
+        if (action === 'list' || action === undefined) {
+          const r = profiles.read();
+          if (!r.profiles.length) console.log('no Chrome profile paired yet: run `k-browser pair` and paste the code into the K-Browser popup');
+          for (const p of r.profiles) console.log(`${p.context === r.default ? '* ' : '  '}${p.name}  (${p.context})`);
+          return 0;
+        }
+        if (action === 'rename' && a && b) {
+          profiles.rename(a, b);
+          console.log(`renamed ${a} to ${b} (agents keep reaching it the same way)`);
+          return 0;
+        }
+        if (action === 'remove' && a) {
+          profiles.remove(a);
+          console.log(`removed ${a}: K-Browser lets go of its tabs; to use it again, pair it again from its popup`);
+          return 0;
+        }
+        if (action === 'default' && a) {
+          profiles.setDefault(a);
+          console.log(`${a} is the default: tabs open there unless an agent names another profile`);
+          return 0;
+        }
+      } catch (e) {
+        console.error(e instanceof Error ? e.message : String(e));
+        return 1;
+      }
+      break;
     }
     case 'client': {
       const [action, name] = rest;
@@ -95,7 +132,7 @@ export async function main(argv) {
           return 1;
         }
         auth.updateClient(name, { eval: v === 'on' });
-        console.log(`${name}: eval ${v} (restart that agent, or reconnect its k-browser MCP server, for it to take effect)`);
+        console.log(`${name}: eval ${v} (in force from that agent's next K-Browser call)`);
         return 0;
       }
       if (!name || !['add', 'remove'].includes(action)) break;
@@ -112,11 +149,13 @@ export async function main(argv) {
       console.log(endpoint(port, token));
       return 0;
     }
-    case 'mcp': {
+    case 'mcp':
+    case 'mcp-worker': {
+      // `mcp` is what agents start (the shim); `mcp-worker` is the MCP server it runs, and the shim calls it exactly so
       const j = rest.indexOf('--client');
       const name = j >= 0 ? rest[j + 1] : undefined;
       if (!name) break;
-      return serveMcp({ name, port });
+      return cmd === 'mcp' ? runShim({ name, port }) : serveMcp({ name, port });
     }
     case 'install':
     case 'uninstall': {
@@ -269,12 +308,15 @@ export async function main(argv) {
       if (p.kind === 'bridge') {
         const h = p.health;
         Object.assign(report, { bridge: 'running', bridgeVersion: h.version, startedBy: service.pid !== null && h.pid === service.pid ? 'launchd' : 'by hand',
-          extensionOnline: Boolean(h.extension), extensionVersion: h.extensionVersion ?? null });
+          extensionOnline: Boolean(h.extension), extensionVersion: h.extensionVersion ?? null,
+          ...(Array.isArray(h.profiles) ? { profiles: h.profiles } : {}) });
       } else {
         Object.assign(report, { bridge: p.kind === 'other' ? `not running (port ${port} is in use by ${p.who})` : 'not running', extensionOnline: false });
       }
       // an older bridge does not report the extension's version: unknown, not a mismatch
-      const extMismatch = report.extensionOnline && typeof report.extensionVersion === 'string' && report.extensionVersion !== VERSION;
+      /** @type {{ name: string, online: boolean, version: string | null }[]} */
+      const behind = (report.profiles ?? []).filter((/** @type {any} */ x) => x.online && typeof x.version === 'string' && x.version !== VERSION);
+      const extMismatch = (report.extensionOnline && typeof report.extensionVersion === 'string' && report.extensionVersion !== VERSION) || behind.length > 0;
       const versionsMatch = report.bridge !== 'running' || (report.bridgeVersion === VERSION && !extMismatch);
       report.model = model.summary();
       report.ok = report.bridge === 'running' && report.extensionOnline && report.paired && versionsMatch && report.model.problem !== 'config_unreadable';
@@ -289,7 +331,8 @@ export async function main(argv) {
         next.push(`the bridge runs ${report.bridgeVersion}, this is ${VERSION}: ${report.startedBy === 'launchd' ? '`k-browser service restart`' : 'restart `k-browser bridge`'}`);
       }
       if (extMismatch) {
-        next.push(`the extension is ${report.extensionVersion}, this is ${VERSION}: reload it at chrome://extensions`);
+        const where = behind.length ? ` in the Chrome profile${behind.length > 1 ? 's' : ''} ${behind.map((x) => x.name).join(', ')}` : '';
+        next.push(`the extension${where} is ${behind[0]?.version ?? report.extensionVersion}, this is ${VERSION}: reload it at chrome://extensions${behind.length > 1 ? ' in each' : ''}`);
       }
       if (next.length) report.next = next;
       console.log(JSON.stringify(report, null, 2));

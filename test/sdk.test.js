@@ -434,3 +434,16 @@ test('footprint: the SDK never sends Runtime.enable', async () => {
   assert.equal(w.client.sent.get('Runtime.enable') ?? 0, 0);
   assert.ok((w.client.sent.get('Page.createIsolatedWorld') ?? 0) > 0, 'scripts ran, in isolated worlds');
 });
+
+test('a Tab attached again starts above the numbers its tab already used: a dialog that opens while it is being set up is not d1', async () => {
+  const w = new Wire();
+  w.holding.add('Page.getFrameTree');
+  const opening = Tab.attach(w.client, 'T1', { snapshotSeq: 4, dialogSeq: 2 });
+  for (let i = 0; i < 5 && !w.held.length; i++) await tick();
+  w.event('Page.javascriptDialogOpening', { type: 'confirm', message: 'sure?', url: 'https://a.test/' });
+  w.release('Page.getFrameTree');
+  const tab = await opening;
+  assert.equal(tab.dialog?.id, 'd3', 'above the dialog ids the earlier Tab gave out');
+  await rejectsWith(() => tab.handleDialog('d1', { accept: true }), 'stale_dialog');
+  assert.equal(tab.snapshotSeq, 4);
+});

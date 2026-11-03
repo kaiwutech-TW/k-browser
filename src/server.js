@@ -20,6 +20,7 @@ import { isIdent, mac, PROTOCOL, randomHex, transcript } from '../extension/prot
 import { Activity, readConfig } from './activity.js';
 import * as auth from './auth.js';
 import * as model from './model.js';
+import * as profiles from './profiles.js';
 import { ALLOWED } from './policy.js';
 import { BROWSER_METHODS, CdpConn, ExtensionLink, Relay } from './relay.js';
 import { EXTENSION_ID, VERSION } from './version.js';
@@ -56,6 +57,11 @@ export async function startBridge({ port = DEFAULT_PORT, host = '127.0.0.1', ext
   // The activity record stays in memory unless the user set activityLog: "disk"
   const disk = readConfig().activityLog === 'disk' ? { dir: path.join(auth.home(), 'activity') } : null;
   const relay = new Relay({ log, handoffTtlMs, activity: activity ?? new Activity({ disk }) });
+  try {
+    relay.setProfiles(profiles.read());
+  } catch {
+    log('k-browser: the profile list cannot be read: `k-browser doctor`');
+  }
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES });
   let listeningPort = port;
   let closing = false;
@@ -80,7 +86,8 @@ export async function startBridge({ port = DEFAULT_PORT, host = '127.0.0.1', ext
     if (req.method === 'GET' && req.url === '/health') {
       // pid: lets install / doctor tell a launchd-run bridge from one started by hand
       res.writeHead(200, NO_STORE).end(JSON.stringify({ ok: true, version: VERSION, protocol: PROTOCOL, pid: process.pid,
-        extension: relay.ext !== null, extensionVersion: relay.ext?.hello.version ?? null, paired: auth.pairKey() !== null }));
+        extension: relay.ext !== null, extensionVersion: relay.ext?.hello.version ?? null, paired: auth.pairKey() !== null,
+        profiles: relay.profiles().map(({ name, online, version, default: d }) => ({ name, online, version, default: d })) }));
       return;
     }
     // /c/<token>/json/version | /c/<token>/json/list | /c/<token>/json
@@ -234,18 +241,21 @@ export async function startBridge({ port = DEFAULT_PORT, host = '127.0.0.1', ext
       log('k-browser: extension handshake failed (wrong pairing code?)');
       return reject(ws, 'auth', 'pairing code does not match: run `k-browser pair` again');
     }
-    // v0 serves one Chrome profile; the first one that pairs is it (`k-browser pair --rotate` resets).
-    const pf = auth.profileFile();
-    const known = fs.existsSync(pf) ? fs.readFileSync(pf, 'utf8').trim() : null;
-    if (known === null) auth.writePrivate(pf, hello.profileId);
-    else if (known !== hello.profileId) {
-      // a removed and reinstalled extension looks like this too: its profile id lived in its own storage
-      return reject(ws, 'profile', 'another Chrome profile is already paired with this bridge (v0 supports one), or the extension '
-        + 'was removed and installed again; run `k-browser pair --rotate` and paste the new code to switch');
+    // Which Chrome profile: one on the list, or a new one when the user just pressed Pair in its popup (profiles.js).
+    /** @type {import('./profiles.js').Profile} */
+    let profile;
+    try {
+      profile = profiles.admit(/** @type {any} */ (hello));
+      relay.setProfiles(profiles.read());
+    } catch (e) {
+      if (e instanceof profiles.ProfileError) return reject(ws, e.code, e.message);
+      log(`k-browser: profile list unreadable (${e instanceof Error ? e.constructor.name : 'error'})`);
+      return reject(ws, 'profiles_unreadable', 'the bridge cannot read its profile list: run `k-browser doctor`');
     }
     const send = sender(ws);
     const link = new ExtensionLink(send, hello, () => ws.close());
     link.key = key;
+    link.profile = { id: profile.id, context: profile.context, name: profile.name };
     ws.on('message', (data, isBinary) => {
       if (isBinary) return;
       let m;
@@ -263,8 +273,9 @@ export async function startBridge({ port = DEFAULT_PORT, host = '127.0.0.1', ext
       log('k-browser: extension offline');
     });
     // welcome goes out only after the listener above is installed, so the extension's first reply is never missed.
-    await send(JSON.stringify({ t: 'welcome', mac: await mac(key, 'bridge', script), version: VERSION })).catch(() => {});
-    log(`k-browser: extension online (${String(hello.product).slice(0, 40)})`);
+    await send(JSON.stringify({ t: 'welcome', mac: await mac(key, 'bridge', script), version: VERSION,
+      profile: { name: profile.name, context: profile.context } })).catch(() => {});
+    log(`k-browser: extension online (${String(hello.product).slice(0, 40)}, profile ${profile.name})`);
     void relay.extConnected(link);
   }
 
@@ -273,7 +284,7 @@ export async function startBridge({ port = DEFAULT_PORT, host = '127.0.0.1', ext
   const watcher = setInterval(() => {
     try {
       const key = auth.pairKey();
-      if ([relay.ext, relay.candidate].some((l) => l !== null && l.key !== key)) relay.dropExtension('pairing key rotated');
+      if (relay.links().some((l) => l.key !== key)) relay.dropExtension('pairing key rotated');
     } catch {
       log('k-browser: pairing-key check failed');
     }
@@ -281,6 +292,11 @@ export async function startBridge({ port = DEFAULT_PORT, host = '127.0.0.1', ext
       relay.revoke(auth.principals());
     } catch {
       log('k-browser: revocation check failed');
+    }
+    try {
+      relay.setProfiles(profiles.read()); // removed or renamed from the CLI
+    } catch {
+      log('k-browser: profile list check failed');
     }
   }, revokePollMs);
   watcher.unref();

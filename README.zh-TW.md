@@ -92,8 +92,10 @@ k-browser pair
 畫面會印出配對碼(第一次執行時建立，存在 `~/.k-browser/pair.key`)。點工具列的 K-Browser 圖示，把配對碼貼進「配對碼」欄位，按「**配對**」,狀態變成綠色的「**已連線**」就完成了。
 
 - **配對碼錯了**:狀態變成紅色的「錯誤」,配對欄位會再出現，重新貼正確的碼即可。
-- **想換配對碼**(例如懷疑外洩):`k-browser pair --rotate`。舊碼立刻失效，已連線的擴充會被斷開;把新碼貼進擴充即可。已經連線時，按彈出視窗裡的「重新配對…」打開欄位。
+- **想換配對碼**(例如懷疑外洩):`k-browser pair --rotate`。舊碼立刻失效，每個設定檔已連線的擴充都會被斷開;在每個設定檔把新碼貼進擴充即可。已經連線時，按彈出視窗裡的「重新配對…」打開欄位。
 - **狀態是「橋接未連線」**:這不是配對的問題，是橋接沒在執行。請執行 `k-browser doctor` 看原因。
+
+**多個 Chrome 設定檔**:在每個要給 agent 用的 Chrome 設定檔(工作、個人…)都載入擴充，貼上**同一組**配對碼;第二個設定檔起，在小視窗裡替它取個名字。之後 agent 用 `tabs {action: "open", profile: "工作"}` 指定在哪個設定檔開分頁(沒指定就用第一個配對的設定檔，或 `k-browser profile default <名稱>` 設定的);`status` 和 `tabs list` 會標出每個分頁在哪個設定檔。每個 agent 都能用所有已配對的設定檔。管理指令：`k-browser profile list | rename | remove | default`。移除的設定檔，要在它的小視窗重新配對才會回來。
 
 ### 5. 確認
 
@@ -130,7 +132,8 @@ k-browser doctor
 | 檢查一切是否正常 | `k-browser doctor` |
 | 重開橋接(更新程式後) | `k-browser service restart`,接著在 `chrome://extensions` 按 K-Browser 的 ↻(不要移除) |
 | 列出 / 新增 / 移除 client | `k-browser client list`、`client add <名稱>`、`client remove <名稱>` |
-| 讓某個 client 可以用 `eval` | `k-browser client set <名稱> --eval on`,之後重開那個 agent |
+| 讓某個 client 可以用 `eval` | `k-browser client set <名稱> --eval on`(下一次呼叫起生效) |
+| 管理已配對的 Chrome 設定檔 | `k-browser profile list`、`rename <舊> <新>`、`remove <名稱>`、`default <名稱>` |
 | 給 CDP 程式端點 | `k-browser endpoint <名稱>`(端點裡含 token,不要貼到別處) |
 | 管理網站筆記 | `k-browser learnings list / add / remove / export / import` |
 | 移除 K-Browser 的所有登記 | `k-browser uninstall`(只移除 K-Browser 自己的設定項目與 token) |
@@ -180,13 +183,14 @@ Kav 也可以自己接 K-Browser:先 `k-browser client add kav`,再把 `KFW_CDP`
 ## 常見問題
 
 - **橋接重開後,agent 說找不到之前的分頁**:這是刻意的。K-Browser 寧可放掉舊分頁，也不靠猜測認回來，免得把無關的分頁當成 agent 的。之前開的分頁請手動關掉。
-- **agent 回報 `bridge_version`**:橋接和 agent 的 MCP server 版本不一致。橋接比較舊，就 `k-browser service restart`;agent 比較舊，就重開 agent 或重連它的 MCP。
+- **agent 回報 `bridge_version`**:橋接和 agent 的 MCP server 版本不一致。橋接比較舊，就 `k-browser service restart`;agent 比較舊，就重開 agent 或重連它的 MCP。0.5.0 起,agent 的 MCP 會自己跟上新版(橋接 `k-browser service restart` 之後);0.5.0 之前就啟動的 agent 要重連一次。
 - **Chrome 上方出現「正在偵錯此瀏覽器」**:這是 Chrome 對擴充使用偵錯介面的固定提示，網頁本身看不到。
 - **其他狀況**:`k-browser doctor` 會回報橋接、配對和擴充的狀態，以及下一步該做什麼。
 
 ## 限制
 
 - 目前只支援 macOS。
+- 每個 agent 都能用所有已配對的 Chrome 設定檔，還不能限定某個 agent 只用某些設定檔。
 - 擴充的介面跟著 Chrome 的語言:繁體中文，其他語言一律顯示英文。
 - CDP 端點是刻意限縮的子集(見上面),不是通用的遠端偵錯埠。
 - 遮罩是規則式的。網站封鎖和 `untrusted-page-content` 包裝可以降低風險，但不代表可以把 agent 放到你不信任它去的網站。

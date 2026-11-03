@@ -262,7 +262,7 @@ test('backpressure: a stuck panel and a stuck disk writer never hold up CDP repl
     for (let i = 0; i < 600; i++) await kav.call(i % 2 ? 'Runtime.evaluate' : 'Page.getLayoutMetrics', i % 2 ? { expression: '1' } : {}, sessionId);
     const ms = Date.now() - t0;
     const a = bridge.relay.activity;
-    assert.ok(/** @type {any} */ (a.panel).queue.size <= a.limits.queue, 'panel queue bounded');
+    assert.ok(/** @type {any} */ ([...a.panels][0]).queue.size <= a.limits.queue, 'panel queue bounded');
     assert.ok(/** @type {any} */ (a.file).queue.size <= a.limits.fileQueue, 'disk queue bounded');
     assert.ok(ms < 30_000, `600 commands answered in ${ms} ms while both consumers were stuck`);
     await chrome.inWorker('globalThis.kbPanelGate = null, globalThis.kbPanelRelease(), true');
@@ -299,7 +299,7 @@ test('a busy panel page: CDP replies stay fast, the bridge queue stays bounded, 
       if (wave < 2) await sleep(5500);
     }
     assert.ok(ms < 15_000, `a wave of 200 took ${ms} ms`);
-    assert.ok((bridge.relay.activity.panel?.queue.size ?? 0) <= bridge.relay.activity.limits.queue, 'bounded (or no subscriber left: the stuck panel was let go)');
+    assert.ok(([...bridge.relay.activity.panels][0]?.queue.size ?? 0) <= bridge.relay.activity.limits.queue, 'bounded (or no subscriber left: the stuck panel was let go)');
     assert.ok(await eventually(async () => (await panelText(panel)).includes(M('gap', '').split('(')[0].trim()), 30_000), 'the panel shows the gap');
     // the stuck panel was let go: the backlog did not pile up for it; it reconnected and resynced from a snapshot
     assert.ok(await eventually(async () => (await panelText(panel)).includes('busy') && (await panelText(panel)).includes(M('panelConnected')), 10_000));

@@ -90,8 +90,8 @@ export class Activity {
     this.byPrincipal = new Map();
     this.ids = 0;
     this.seq = 0;
-    /** the side panel's feed, while a panel is open @type {Feed | null} */
-    this.panel = null;
+    /** the side panels' feeds (one per Chrome profile with its panel open) @type {Set<Feed>} */
+    this.panels = new Set();
     /** @type {Feed | null} */
     this.file = null;
     /** when the credential files last changed, as the redactor saw them */
@@ -140,7 +140,7 @@ export class Activity {
   /** @param {Entry} e */
   #emit(e) {
     e.seq = ++this.seq;
-    this.panel?.push(`e${e.id}`, { type: 'entry', entry: { ...e } });
+    for (const panel of this.panels) panel.push(`e${e.id}`, { type: 'entry', entry: { ...e } });
     this.file?.push(`e${e.id}`, { ...e });
   }
 

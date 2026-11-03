@@ -38,10 +38,12 @@ export class Browser {
     return new Browser(await CdpClient.connect(endpoint));
   }
 
-  /** Open a background tab in the K-Browser window and attach to it. @param {string} [url] */
-  async newTab(url = 'about:blank') {
-    const { targetId } = await this.client.call('Target.createTarget', { url: 'about:blank', background: true });
-    const tab = await Tab.attach(this.client, targetId);
+  /** Open a background tab in the K-Browser window (of the profile whose browserContextId is given, else the default
+   * profile) and attach to it. @param {string} [url] @param {{ browserContextId?: string }} [o] */
+  async newTab(url = 'about:blank', { browserContextId } = {}) {
+    const created = await this.client.call('Target.createTarget', { url: 'about:blank', background: true, ...(browserContextId ? { browserContextId } : {}) });
+    const tab = await Tab.attach(this.client, created.targetId);
+    tab.browserContextId = typeof created.browserContextId === 'string' ? created.browserContextId : null;
     if (url !== 'about:blank') await tab.goto(url);
     return tab;
   }
@@ -52,16 +54,21 @@ export class Browser {
 }
 
 export class Tab {
-  /** @param {CdpClient} client @param {string} targetId */
-  static async attach(client, targetId) {
+  /**
+   * from: the snapshot and dialog numbers this tab already used (a Tab object attached before it): new refs and dialog
+   * ids start above them, set before any event is heard, so an old one never names a new node or dialog.
+   * @param {CdpClient} client @param {string} targetId @param {{ snapshotSeq?: number, dialogSeq?: number }} [from]
+   */
+  static async attach(client, targetId, from = {}) {
     const { sessionId } = await client.call('Target.attachToTarget', { targetId, flatten: true });
-    const tab = new Tab(client, targetId, sessionId);
+    const tab = new Tab(client, targetId, sessionId, from);
     await tab.#setUp(sessionId);
     return tab;
   }
 
-  /** @param {CdpClient} client @param {string} targetId @param {string} sessionId */
-  constructor(client, targetId, sessionId) {
+  /** @param {CdpClient} client @param {string} targetId @param {string} sessionId
+   * @param {{ snapshotSeq?: number, dialogSeq?: number }} [from] */
+  constructor(client, targetId, sessionId, from = {}) {
     this.client = client;
     this.targetId = targetId;
     this.sessionId = sessionId;
@@ -72,12 +79,14 @@ export class Tab {
     this.gone = null;
     /** @type {Set<Promise<void>>} child sessions being set up */
     this.setups = new Set();
-    this.snapshotSeq = 0;
+    this.snapshotSeq = from.snapshotSeq ?? 0;
     /** @type {Map<string, import('./snapshot.js').RefEntry>} */
     this.refs = new Map();
     /** the JavaScript dialog open now, from any of the tab's sessions @type {Dialog | null} */
     this.dialog = null;
-    this.dialogSeq = 0;
+    this.dialogSeq = from.dialogSeq ?? 0;
+    /** the Chrome profile it was opened in, as K-Browser's createTarget answered (null: attached, not opened here) @type {string | null} */
+    this.browserContextId = null;
     /** @type {Set<(d: Dialog) => void>} */
     this.dialogListeners = new Set();
     this.unsubscribe = client.onEvent((ev) => this.#onEvent(ev));

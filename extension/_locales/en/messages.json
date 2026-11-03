@@ -213,7 +213,7 @@
     "message": "eval: off (to turn it on, run k-browser client set {0} --eval on in a terminal)"
   },
   "settingsApply": {
-    "message": "Changes to blocking, screenshots and eval apply when this program restarts (or reconnects its k-browser MCP server)."
+    "message": "Changes to blocking, screenshots and eval apply from this program's next K-Browser call (an agent connected before K-Browser 0.5.0: after reconnecting its k-browser MCP server once)."
   },
   "current": {
     "message": "Now: {0}"
@@ -310,5 +310,23 @@
   },
   "cat_passwords": {
     "message": "Password managers"
+  },
+  "popupNameLabel": {
+    "message": "Name of this Chrome profile"
+  },
+  "popupNameHint": {
+    "message": "So agents can tell your profiles apart, e.g. work or personal (the first one may stay empty)."
+  },
+  "popupProfile": {
+    "message": "Chrome profile: {0}"
+  },
+  "panelProfile": {
+    "message": "profile {0}"
+  },
+  "panelReturnElsewhere": {
+    "message": "Return it from the K-Browser popup in the profile {0}"
+  },
+  "panelProfiles": {
+    "message": "profiles"
   }
 }

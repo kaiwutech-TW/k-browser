@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { domainToASCII } from 'node:url';
 import * as auth from './auth.js';
+import { withFileLock } from './filelock.js';
 
 export const KINDS = /** @type {const} */ (['api', 'wall', 'pitfall', 'tip']);
 const MAX_NOTE = 2048;
@@ -75,28 +76,6 @@ function writeDomain(d, notes) {
   fs.renameSync(tmp, f);
 }
 
-const pause = (/** @type {number} */ ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-
-/** Why a lock file is not being let go: its holder is alive (busy), or the process named in it is gone (left behind by a
- * crash). Never taken over: a file system has no "remove it only if it is still that file", so clearing a lock judged
- * stale can remove a newer holder's and let two writers in: the feature is narrowed instead of
- * guessing. @param {string} file @returns {'busy' | 'left' | 'gone' | 'unreadable'} */
-function lockState(file) {
-  try {
-    const pid = Number(fs.readFileSync(file, 'utf8'));
-    if (!Number.isInteger(pid) || pid <= 0) return Date.now() - fs.statSync(file).mtimeMs > 10_000 ? 'left' : 'busy';
-    try {
-      process.kill(pid, 0);
-      return 'busy';
-    } catch (e) {
-      return /** @type {any} */ (e).code === 'ESRCH' ? 'left' : 'busy';
-    }
-  } catch (e) {
-    if (/** @type {any} */ (e).code === 'ENOENT') return 'gone'; // let go meanwhile: just try again
-    return 'unreadable'; // not ours to judge (permissions changed by hand): reported once the wait is over
-  }
-}
-
 /**
  * Run fn holding learnings/.lock. A domain's file is read whole and written back, and several MCP sessions and the CLI
  * are separate processes: without one lock around the whole read-change-write, two adds at once keep only one note.
@@ -104,36 +83,11 @@ function lockState(file) {
  * @template T @param {() => T} fn @returns {T}
  */
 function locked(fn) {
-  fs.mkdirSync(dir(), { recursive: true, mode: 0o700 });
   const file = path.join(dir(), '.lock');
-  const until = Date.now() + 5000;
-  let mine;
-  for (;;) {
-    try {
-      const fd = fs.openSync(file, 'wx', 0o600);
-      fs.writeSync(fd, String(process.pid));
-      mine = fs.fstatSync(fd).ino;
-      fs.closeSync(fd);
-      break;
-    } catch (e) {
-      if (/** @type {any} */ (e).code !== 'EEXIST') throw e;
-      const st = lockState(file);
-      if (st === 'gone') continue;
-      if (Date.now() > until) {
-        throw new LearningsError(st === 'left'
-          ? `the notes are locked by a k-browser that is no longer running (it stopped while writing): once no k-browser is writing notes, remove ${file}`
-          : st === 'unreadable' ? `the notes' lock ${file} cannot be read (its permissions?): fix or remove it`
-            : 'the notes are busy (another k-browser is writing them): try again');
-      }
-      pause(5 + Math.random() * 20);
-    }
-  }
-  try {
-    return fn();
-  } finally {
-    // only our own lock (nobody else removes it, but a user may have by hand)
-    if (fs.statSync(file, { throwIfNoEntry: false })?.ino === mine) fs.rmSync(file, { force: true });
-  }
+  return withFileLock(file, fn, (st) => new LearningsError(st === 'left'
+    ? `the notes are locked by a k-browser that is no longer running (it stopped while writing): once no k-browser is writing notes, remove ${file}`
+    : st === 'unreadable' ? `the notes' lock ${file} cannot be read (its permissions?): fix or remove it`
+      : 'the notes are busy (another k-browser is writing them): try again'));
 }
 
 /**

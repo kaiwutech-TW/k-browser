@@ -1,5 +1,7 @@
 // @ts-check
-// `k-browser mcp --client <name>`: an MCP server on stdio, itself an ordinary SDK client of the bridge.
+// `k-browser mcp-worker --client <name>`: the MCP server on stdio, itself an ordinary SDK client of the bridge. The agent
+// starts `k-browser mcp`, a shim (shim.js) that runs this as its child and starts a new one when K-Browser or the
+// client's record changes; started directly (tests), it is a complete MCP server too.
 //
 // Identity: the token is read from ~/.k-browser/clients/<name>.json by this process; it never goes into the agent's
 // MCP configuration. Every session of the same client shares one owner (the client's principal).
@@ -22,9 +24,10 @@
 // handed_off, and input already under way stops before needs_human answers; "returned" means only that the user
 // gave control back.
 
+import { fileURLToPath } from 'node:url';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { readConfig } from '../activity.js';
 import * as files from '../files.js';
 import * as learnings from '../learnings.js';
@@ -55,6 +58,23 @@ const HAS_FORM_MARKUP = /(?:<|\\u003c)(?:form|input|textarea|select|option)\b/i;
 const TEXTUAL = /^(text\/|application\/(json|[a-z.+-]*\+json|javascript|xml|[a-z.+-]*\+xml|x-www-form-urlencoded))/i;
 
 /** An error K-Browser itself raises (its message is ours, not the page's). */
+const CLI_PATH = fileURLToPath(new URL('../cli.js', import.meta.url));
+/** A CLI command to show the user: `k-browser` is on PATH only after `npm link`, so the node form comes too. @param {string} args */
+const cliCommand = (args) => `\`k-browser ${args}\` (or \`node ${CLI_PATH} ${args}\`)`;
+const RECONNECT = 'reconnect this agent\'s k-browser MCP server (Claude Code: /mcp)';
+
+/**
+ * Why the bridge does not know this client, told from its record on disk: revoking (side panel or `client remove`)
+ * deletes the record; `client add` again writes a new token, which a running MCP server does not pick up.
+ * @param {string} name @param {string | null} token the token this MCP server started with (null: it had none)
+ */
+export function unknownClientMessage(name, token) {
+  const rec = auth.clientRecord(name);
+  if (!rec) return `client ${name} was revoked (Revoke in the side panel, or \`client remove\`), or never added: add it with ${cliCommand(`client add ${name}`)}, then ${RECONNECT}`;
+  if (token !== null && rec.token !== token) return `client ${name} was added again with a new token: ${RECONNECT}`;
+  return `the bridge does not know client ${name}: ${cliCommand('doctor')}`;
+}
+
 export class ToolError extends Error {
   /** @param {string} code @param {string} message */
   constructor(code, message) {
@@ -74,7 +94,11 @@ class Blocked extends Error {
 
 /** @typedef {{ head: Record<string, any>, page?: unknown, image?: Buffer, isError?: boolean }} Out */
 /** space: the group the agent put the tab in (tabs open {space}); kept in this MCP session only.
- * @typedef {{ targetId: string, tab: Tab | null, opener: boolean, alerts: string[], watched: Tab | null, space?: string }} TabEntry */
+ * seq / dseq: the highest snapshot and dialog numbers of the tab so far, kept across Tab objects (a reattach, a new
+ * worker) so that a ref or a dialog id is never issued twice: an old one is stale, never another node or dialog.
+ * context: the Chrome profile it is in (its browserContextId), when known.
+ * @typedef {{ targetId: string, tab: Tab | null, opener: boolean, alerts: string[], watched: Tab | null, space?: string, seq?: number, dseq?: number, context?: string }} TabEntry
+ * @typedef {{ next: number, tabs: { alias: string, targetId: string, opener: boolean, space?: string, seq?: number, dseq?: number, context?: string }[] }} TabState */
 const SPACE = /^[\p{L}\p{N}_-]{1,32}$/u;
 /** @typedef {{ stopped: boolean, actionId: string | null, done: number, stepSent?: number }} Ctl what a tool run tells its dialog watch, and is told back;
  * stepSent: the tab's input count when the step in progress began */
@@ -198,6 +222,36 @@ export class McpSession {
     /** @type {Map<string, TabEntry>} alias -> tab */ this.tabs = new Map();
     /** @type {Map<string, string>} targetId -> alias */ this.aliases = new Map();
     this.nextAlias = 0;
+    /** @type {((state: TabState) => Promise<void>) | null} under the shim: report the tab table before a result shows it */
+    this.onTabs = null;
+    /** @type {string} the table last reported (JSON) */
+    this.tabsSent = '';
+  }
+
+  /** The tab table, as the shim keeps it for the next worker. @returns {TabState} */
+  tabState() {
+    return { next: this.nextAlias, tabs: [...this.tabs].map(([alias, e]) => ({ alias, targetId: e.targetId, opener: e.opener,
+      ...(e.space ? { space: e.space } : {}), ...(e.seq ? { seq: e.seq } : {}), ...(e.dseq ? { dseq: e.dseq } : {}),
+      ...(e.context ? { context: e.context } : {}) })) };
+  }
+
+  /**
+   * Take over the tab table of the worker before this one (k-browser/adopt): the same ids for the same tabs, and new
+   * ids and refs only above every one already given out. Whether a tab is still this client's is the bridge's to say
+   * when the tab is next used (it refuses a target this principal does not own): unknown_tab then.
+   * @param {any} state
+   */
+  adopt(state) {
+    if (!state || typeof state !== 'object' || this.tabs.size > 0) return;
+    if (Number.isInteger(state.next)) this.nextAlias = Math.max(this.nextAlias, state.next);
+    for (const x of Array.isArray(state.tabs) ? state.tabs : []) {
+      if (typeof x?.alias !== 'string' || !/^t\d+$/.test(x.alias) || typeof x.targetId !== 'string' || this.aliases.has(x.targetId)) continue;
+      this.aliases.set(x.targetId, x.alias);
+      this.tabs.set(x.alias, { targetId: x.targetId, tab: null, opener: x.opener === true, alerts: [], watched: null,
+        ...(typeof x.space === 'string' && SPACE.test(x.space) ? { space: x.space } : {}), ...(Number.isInteger(x.seq) && x.seq > 0 ? { seq: x.seq } : {}),
+        ...(Number.isInteger(x.dseq) && x.dseq > 0 ? { dseq: x.dseq } : {}), ...(typeof x.context === 'string' ? { context: x.context } : {}) });
+    }
+    this.tabsSent = JSON.stringify(this.tabState());
   }
 
   /** Every credential K-Browser has loaded, read again on each use (clients come and go). */
@@ -224,7 +278,7 @@ export class McpSession {
       // a LaunchAgent keeps running the old code after an update: refuse rather than talk across versions
       const v = await this.bridgeVersion(this.endpoint);
       if (v === null) throw new ToolError('bridge_down', 'the K-Browser bridge is not running: run `k-browser doctor`');
-      if (v === '') throw new ToolError('unknown_client', `the bridge does not know client ${this.name} (removed?): run \`k-browser install\` again`);
+      if (v === '') throw new ToolError('unknown_client', unknownClientMessage(this.name, this.token));
       if (v !== VERSION) {
         // the older side runs old code: an agent keeps its MCP server from when it started
         const newer = v.localeCompare(VERSION, undefined, { numeric: true }) > 0;
@@ -257,7 +311,7 @@ export class McpSession {
     const b = await this.#browser();
     if (e.tab && !e.tab.gone && e.tab.client === b.client) return { alias: /** @type {string} */ (alias), e, t: e.tab };
     try {
-      this.#watch(e, await Tab.attach(b.client, e.targetId));
+      this.#watch(e, await Tab.attach(b.client, e.targetId, { snapshotSeq: e.seq ?? 0, dialogSeq: e.dseq ?? 0 }));
     } catch (err) {
       if (err instanceof SdkError && err.code === 'disconnected') throw err;
       this.tabs.delete(/** @type {string} */ (alias));
@@ -272,6 +326,9 @@ export class McpSession {
     e.tab = t;
     if (e.watched === t) return;
     e.watched = t;
+    // Tab.attach was given the numbers this tab already used (#tab), before it heard any event: kept as a second guard
+    if ((e.seq ?? 0) > t.snapshotSeq) t.snapshotSeq = /** @type {number} */ (e.seq);
+    if ((e.dseq ?? 0) > t.dialogSeq) t.dialogSeq = /** @type {number} */ (e.dseq);
     t.onDialog((d) => {
       if (d.type !== 'alert') return;
       e.alerts.push(this.#dialogShown(e, t, d) ? d.message : '(an alert from a site this client may not use)');
@@ -386,7 +443,22 @@ export class McpSession {
         out = { head: { tab: args?.tab ?? null, error: code }, page: { message: err instanceof Error ? err.message : String(err) }, isError: true };
       }
     }
+    await this.#reportTabs();
     return render(r, out);
+  }
+
+  /** Under the shim: the tab table, whenever it changed, before the result that may show it goes out. */
+  async #reportTabs() {
+    for (const e of this.tabs.values()) {
+      if (e.tab && e.tab.snapshotSeq > (e.seq ?? 0)) e.seq = e.tab.snapshotSeq;
+      if (e.tab && e.tab.dialogSeq > (e.dseq ?? 0)) e.dseq = e.tab.dialogSeq;
+    }
+    if (!this.onTabs) return;
+    const state = this.tabState();
+    const json = JSON.stringify(state);
+    if (json === this.tabsSent) return;
+    this.tabsSent = json;
+    await this.onTabs(state).catch(() => {});
   }
 
   /** @param {string} name @param {Record<string, any>} a @param {AbortSignal} [signal] @returns {Promise<Out>} */
@@ -544,17 +616,44 @@ export class McpSession {
     const b = await this.#browser();
     /** @type {string[]} */ const closed = [];
     /** @type {string[]} */ const kept = [];
+    /** @type {string[]} */ const gone = [];
     for (const [alias, e] of [...this.tabs]) {
       if (e.space !== space) continue;
       // one bridge command checks for a waiting hand-off and closes, so a hand-off started meanwhile either keeps the
-      // tab or is refused
-      const r = await b.client.call('KBrowser.closeUnlessHandedOff', { targetId: e.targetId }).catch(() => ({ closed: true }));
-      if (!r.closed) { kept.push(alias); continue; }
+      // tab or is refused; refused outright, the tab is not this client's (closed already, or a client added again
+      // under the same name does not own it): not reported as closed
+      const r = await b.client.call('KBrowser.closeUnlessHandedOff', { targetId: e.targetId }).catch(() => null);
+      if (r && !r.closed) { kept.push(alias); continue; }
       this.tabs.delete(alias);
       this.aliases.delete(e.targetId);
-      closed.push(alias);
+      (r ? closed : gone).push(alias);
     }
-    return { head: { space, closed, ...(kept.length ? { kept_handed_off: kept } : {}) } };
+    return { head: { space, closed, ...(gone.length ? { gone } : {}), ...(kept.length ? { kept_handed_off: kept } : {}) } };
+  }
+
+  /** The Chrome profiles, read from the bridge each time (renamed or removed meanwhile: never a stale mapping).
+   * @param {Browser} b @returns {Promise<{ context: string, name: string, online: boolean, default: boolean }[]>} */
+  async #profiles(b) {
+    const r = await b.client.call('KBrowser.profiles').catch(() => ({ profiles: [] }));
+    return Array.isArray(r?.profiles) ? r.profiles : [];
+  }
+
+  /**
+   * Where a new tab goes: the profile named (by name, looked up now), else the profile of the space it joins, else
+   * the default (no context). A space stays in one profile: its tabs share cookies.
+   * @param {Browser} b @param {string | undefined} name @param {string | undefined} space @returns {Promise<string | null>}
+   */
+  async #contextFor(b, name, space) {
+    const spaceContext = space === undefined ? undefined : [...this.tabs.values()].find((e) => e.space === space && e.context)?.context;
+    if (name === undefined) return spaceContext ?? null;
+    const all = await this.#profiles(b);
+    const p = all.find((x) => x.name.toLowerCase() === name.trim().toLowerCase());
+    if (!p) throw new ToolError('unknown_profile', `no Chrome profile ${JSON.stringify(name)}; there are: ${all.map((x) => x.name).join(', ') || 'none'}`);
+    if (spaceContext && spaceContext !== p.context) {
+      const other = all.find((x) => x.context === spaceContext)?.name ?? 'another profile';
+      throw new ToolError('bad_argument', `space ${space} is in the Chrome profile ${JSON.stringify(other)}: a space stays in one profile`);
+    }
+    return p.context;
   }
 
   /** @param {Record<string, any>} a @returns {Promise<Out>} */
@@ -564,6 +663,7 @@ export class McpSession {
       case 'list': {
         if (a.space !== undefined && (typeof a.space !== 'string' || !SPACE.test(a.space))) throw new ToolError('bad_argument', 'space: up to 32 letters, digits, _ or -');
         const { targetInfos } = await b.client.call('Target.getTargets');
+        const names = new Map((await this.#profiles(b)).map((x) => [x.context, x.name]));
         /** @type {Record<string, any>[]} */ const head = [];
         /** @type {Record<string, any>} */ const page = {};
         for (const ti of targetInfos.filter((/** @type {any} */ x) => x.type === 'page')) {
@@ -571,9 +671,13 @@ export class McpSession {
           const opener = ti.openerId ? this.aliases.get(ti.openerId) ?? 'other' : null;
           const main = this.policy.assess([{ frameId: 'top', parentId: null, url: String(ti.url ?? '') }], { opened: Boolean(ti.openerId) }).main;
           const { handoffId } = await b.client.call('KBrowser.tabHandoff', { targetId: ti.targetId }).catch(() => ({ handoffId: null }));
-          const space = this.tabs.get(alias)?.space;
+          const entry = this.tabs.get(alias);
+          if (entry && typeof ti.browserContextId === 'string') entry.context = ti.browserContextId;
+          const space = entry?.space;
           if (a.space !== undefined && space !== a.space) continue;
-          const extra = { ...(opener ? { openedBy: opener } : {}), ...(handoffId ? { handedOff: handoffId } : {}), ...(space ? { space } : {}) };
+          const profile = names.get(ti.browserContextId);
+          const extra = { ...(opener ? { openedBy: opener } : {}), ...(handoffId ? { handedOff: handoffId } : {}), ...(space ? { space } : {}),
+            ...(profile ? { profile } : {}) };
           if (main.verdict !== 'allowed') head.push({ tab: alias, status: 'blocked_origin', origin: main.origin ?? 'unknown', ...extra });
           else {
             head.push({ tab: alias, ...extra });
@@ -586,10 +690,22 @@ export class McpSession {
       case 'open': {
         const url = a.url ?? 'about:blank';
         if (a.space !== undefined && (typeof a.space !== 'string' || !SPACE.test(a.space))) throw new ToolError('bad_argument', 'space: up to 32 letters, digits, _ or -');
+        if (a.profile !== undefined && typeof a.profile !== 'string') throw new ToolError('bad_argument', 'profile: a Chrome profile name (see status)');
         this.#checkUrl(url);
-        const t = await b.newTab();
+        const context = await this.#contextFor(b, a.profile, a.space);
+        const t = await b.newTab('about:blank', context ? { browserContextId: context } : {});
         const alias = this.#alias(t.targetId, false);
         const e = /** @type {TabEntry} */ (this.tabs.get(alias));
+        // the profile it is really in, from the answer that created it (the default may change later): what keeps its
+        // space in one profile. Not known: no space is started on a guess; the tab is closed and that is said.
+        if (t.browserContextId) e.context = t.browserContextId;
+        else if (a.space !== undefined) {
+          const closed = await t.close().then(() => true, () => false);
+          this.tabs.delete(alias);
+          this.aliases.delete(t.targetId);
+          throw new ToolError('result_unknown', 'K-Browser could not tell which Chrome profile the new tab opened in, so it is not put in a space: '
+            + (closed ? 'the tab was closed; open it again' : 'closing it failed, so an empty tab may be left open; open it again'));
+        }
         if (a.space !== undefined) e.space = a.space;
         this.#watch(e, t);
         if (url === 'about:blank') return { head: { tab: alias } };
@@ -679,6 +795,7 @@ export class McpSession {
       if (handoffId) handoffs++;
     }
     const names = new Set(this.tools().map((t) => t.name));
+    const profiles = (await this.#profiles(b)).map((x) => ({ name: x.name, online: x.online, ...(x.default ? { default: true } : {}) }));
     /** @type {Record<string, unknown>} where Kav's decisions go; a client with site restrictions never uses JEV */
     const m = model.summary();
     if (m.backend === 'jev' && !m.problem && (this.policyCounts.blocked > 0 || this.policyCounts.allowList)) m.problem = 'jev_policy_restricted';
@@ -686,7 +803,7 @@ export class McpSession {
       k_browser: VERSION, bridge: typeof health?.version === 'string' ? health.version : null,
       extension: health?.extension === true ? (typeof health.extensionVersion === 'string' ? health.extensionVersion : 'online') : 'offline',
       client: this.name, tabs: pages.length, handoffs, run_flow: names.has('run_flow'), screenshot: names.has('screenshot'),
-      policy: { blocked: this.policyCounts.blocked, allow_list: this.policyCounts.allowList }, model: m,
+      profiles, policy: { blocked: this.policyCounts.blocked, allow_list: this.policyCounts.allowList }, model: m, shim: shimInfo(),
     } };
   }
 
@@ -1042,6 +1159,31 @@ export function render(r, out) {
   return { content, ...(out.isError ? { isError: true } : {}) };
 }
 
+/** The shim this worker runs under ({ protocol, version }), or null when the agent started it directly. */
+function shimInfo() {
+  const [protocol, version] = String(process.env.KBROWSER_SHIM ?? '').split(' ');
+  return protocol ? { protocol: Number(protocol), version: version ?? null } : null;
+}
+
+/**
+ * The MCP server of a client that does not exist (revoked, or never added): only status, which answers unknown_client
+ * with what to do. Runs until stdin closes.
+ * @param {string} name
+ */
+async function serveWithoutClient(name) {
+  const server = new Server({ name: 'k-browser', version: VERSION }, { capabilities: { tools: {} }, instructions: INSTRUCTIONS });
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS.filter((t) => t.name === 'status') }));
+  server.setRequestHandler(CallToolRequestSchema, async () => render(redactor({ secrets: [auth.pairKey(), ...auth.clients().values()] }),
+    { head: { error: 'unknown_client', message: unknownClientMessage(name, null) }, isError: true }));
+  await server.connect(new StdioServerTransport());
+  await new Promise((resolve) => {
+    process.stdin.once('end', resolve);
+    process.stdin.once('close', resolve);
+  });
+  await server.close().catch(() => {});
+  return 0;
+}
+
 /**
  * Run the MCP server on stdio until stdin closes.
  * @param {{ name: string, port: number }} o
@@ -1051,8 +1193,9 @@ export async function serveMcp({ name, port }) {
   /** @param {string} line */
   const log = (line) => { try { process.stderr.write(`${redactor({ secrets: [record?.token, auth.pairKey(), ...auth.clients().values()] }).text(line)}\n`); } catch { /* stderr gone */ } };
   if (!record) {
-    log(`k-browser mcp: no client ${JSON.stringify(name)}: run \`k-browser client add ${name}\``);
-    return 1;
+    // Exiting here would leave the agent with a closed connection and no reason: stay up and say why on every call.
+    log(`k-browser mcp: no client ${JSON.stringify(name)}: ${unknownClientMessage(name, null)}`);
+    return serveWithoutClient(name);
   }
   let session;
   try {
@@ -1066,6 +1209,15 @@ export async function serveMcp({ name, port }) {
   const server = new Server({ name: 'k-browser', version: VERSION }, { capabilities: { tools: {} }, instructions: INSTRUCTIONS });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: session.tools() }));
   server.setRequestHandler(CallToolRequestSchema, async (req, extra) => session.call(req.params.name, req.params.arguments ?? {}, extra.signal));
+  if (shimInfo()) {
+    // the shim's own messages: the tab table goes to it before any result that shows it, and comes back to the next worker
+    session.onTabs = (state) => server.notification({ method: 'k-browser/tabs', params: state });
+    server.fallbackRequestHandler = async (req) => {
+      if (req.method !== 'k-browser/adopt') throw new McpError(ErrorCode.MethodNotFound, `no method ${req.method}`);
+      session.adopt(req.params);
+      return {};
+    };
+  }
   const transport = new StdioServerTransport();
   transport.onerror = (e) => log(`k-browser mcp: transport: ${e.message}`);
   await server.connect(transport);
