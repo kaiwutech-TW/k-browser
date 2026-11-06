@@ -53,8 +53,8 @@ An agent only sees and controls **the tabs it opened itself**. Your other tabs a
 
 ## Install
 
-Below, `k-browser` means `node src/cli.js` run in this folder. Run `npm link` once in this folder to have a `k-browser`
-command everywhere.
+Step 1 ends with `npm link`, which adds the `k-browser` command used below. If it fails (no write access to npm's
+global folder), run `node src/cli.js` in this folder wherever the steps say `k-browser`.
 
 ### 1. Get the code
 
@@ -62,6 +62,7 @@ command everywhere.
 git clone https://github.com/kaiwutech-TW/k-browser.git K-Browser
 cd K-Browser
 npm install
+npm link       # adds the k-browser command
 ```
 
 ### 2. Register with your agents and start the bridge

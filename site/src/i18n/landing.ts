@@ -89,7 +89,7 @@ const en = {
 		title: 'Get started',
 		lead: 'macOS, Chrome 125+ and Node.js 22+.',
 		steps: [
-			['Get the code', 'git clone https://github.com/kaiwutech-TW/k-browser.git && cd k-browser && npm install'],
+			['Get the code', 'git clone https://github.com/kaiwutech-TW/k-browser.git && cd k-browser && npm install && npm link'],
 			['Register your agents and start the bridge', 'k-browser install'],
 			['Load extension/ in chrome://extensions (Developer mode → Load unpacked)', ''],
 			['Pair the extension with the bridge', 'k-browser pair'],
@@ -199,7 +199,7 @@ const zh: typeof en = {
 		title: '開始使用',
 		lead: '需要 macOS、Chrome 125 以上、Node.js 22 以上。',
 		steps: [
-			['取得程式', 'git clone https://github.com/kaiwutech-TW/k-browser.git && cd k-browser && npm install'],
+			['取得程式', 'git clone https://github.com/kaiwutech-TW/k-browser.git && cd k-browser && npm install && npm link'],
 			['登記你的 agent,啟動橋接', 'k-browser install'],
 			['在 chrome://extensions 載入 extension/(開發人員模式 → 載入未封裝項目)', ''],
 			['配對擴充和橋接', 'k-browser pair'],

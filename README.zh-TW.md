@@ -41,7 +41,7 @@ agent 只看得到、只操作得了**它自己開的分頁**。你的其他分�
 
 ## 安裝
 
-以下的 `k-browser` 指的是在這個資料夾裡執行 `node src/cli.js`。想在任何地方直接打 `k-browser`,可以在這個資料夾執行一次 `npm link`。
+第 1 步最後的 `npm link` 會加入下面用到的 `k-browser` 指令。如果它失敗(沒有 npm 全域資料夾的寫入權限),下面寫 `k-browser` 的地方，改成在這個資料夾裡執行 `node src/cli.js`。
 
 ### 1. 取得程式
 
@@ -49,6 +49,7 @@ agent 只看得到、只操作得了**它自己開的分頁**。你的其他分�
 git clone https://github.com/kaiwutech-TW/k-browser.git K-Browser
 cd K-Browser
 npm install
+npm link       # 加入 k-browser 指令
 ```
 
 ### 2. 登記到你的 agent,並啟動橋接
