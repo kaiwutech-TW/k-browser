@@ -8,7 +8,8 @@ description: Everyday k-browser commands and what the side panel can change.
 | To | Run |
 |---|---|
 | Check that everything works | `k-browser doctor` |
-| Restart the bridge (after updating) | `k-browser service restart`, then click ↻ for K-Browser in `chrome://extensions` (do not remove it) |
+| Update K-Browser | `k-browser update` (git pull, `npm ci`, restart the bridge), then click ↻ for K-Browser in `chrome://extensions` in each Chrome profile (do not remove it) |
+| Restart the bridge | `k-browser service restart` |
 | List / add / remove clients | `k-browser client list`, `client add <name>`, `client remove <name>` |
 | Let a client use `eval` | `k-browser client set <name> --eval on` (from its next call) |
 | Manage the paired Chrome profiles | `k-browser profile list`, `rename <old> <new>`, `remove <name>`, `default <name>` |

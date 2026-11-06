@@ -8,7 +8,8 @@ description: 平常會用到的 k-browser 指令，以及側邊面板能改什�
 | 要做什麼 | 指令 |
 |---|---|
 | 檢查一切是否正常 | `k-browser doctor` |
-| 重開橋接(更新程式後) | `k-browser service restart`,接著在 `chrome://extensions` 按 K-Browser 的 ↻(不要移除) |
+| 更新 K-Browser | `k-browser update`(git pull、`npm ci`、重開橋接),接著在每個 Chrome 設定檔的 `chrome://extensions` 按 K-Browser 的 ↻(不要移除) |
+| 重開橋接 | `k-browser service restart` |
 | 列出 / 新增 / 移除 client | `k-browser client list`、`client add <名稱>`、`client remove <名稱>` |
 | 讓某個 client 可以用 `eval` | `k-browser client set <名稱> --eval on`(下一次呼叫起生效) |
 | 管理已配對的 Chrome 設定檔 | `k-browser profile list`、`rename <舊> <新>`、`remove <名稱>`、`default <名稱>` |

@@ -1,6 +1,6 @@
 {
   "name": "k-browser",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Drive your real, signed-in Chrome from local agents (Claude Code, Codex, Antigravity, Kav) through a CDP-compatible endpoint.",
   "type": "module",
   "license": "MIT",

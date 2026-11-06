@@ -64,3 +64,11 @@ import { Aside, Steps } from '@astrojs/starlight/components';
 <Aside type="note" title="關於配對碼">
 配對碼是橋接和擴充之間的共用密鑰。沒有它，橋接不接受任何擴充，別的程式也冒充不了擴充。`k-browser pair --rotate` 會換一個新的，舊的立刻失效。「橋接未連線」不是配對的問題，是橋接沒在執行;請看 `k-browser doctor`。
 </Aside>
+
+## 更新
+
+```sh
+k-browser update
+```
+
+它會抓新的程式(`git pull --ff-only`)、安裝套件(`npm ci`)、重開橋接。接著在每個有裝 K-Browser 的 Chrome 設定檔，到 `chrome://extensions` 按 K-Browser 的 ↻:Chrome 不讓程式重新載入未封裝的擴充。agent 會自己跟上。資料夾裡的檔案有本機修改時，它什麼都不改就停下。如果你是下載 zip 而不是 clone,請下載新的版本、整個資料夾換掉。

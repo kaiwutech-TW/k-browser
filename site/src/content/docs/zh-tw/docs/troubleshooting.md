@@ -13,6 +13,10 @@ description: 常見狀況和處理方式。
 
 橋接和 agent 的 MCP server 版本不一致。橋接比較舊，就 `k-browser service restart`;agent 比較舊，就重開 agent 或重連它的 MCP。0.5.0 起,agent 的 MCP 會自己跟上新版(橋接 `k-browser service restart` 之後);0.5.0 之前就啟動的 agent 要重連一次。
 
+### `chrome://extensions` 顯示的還是舊版本
+
+Chrome 從你「載入未封裝項目」時選的資料夾執行擴充，檔案改了也不會自己重新載入。`git pull` 或 `k-browser update` 之後，要在每個 Chrome 設定檔的 `chrome://extensions` 按 K-Browser 的 ↻。如果還是舊版本，看 K-Browser 卡片上的路徑(要開「開發人員模式」):它必須是 `k-browser extension-path` 印出的資料夾。如果是另一份(例如更早 clone 的),按「**移除**」,再用「**載入未封裝項目**」選對的資料夾，重新配對。
+
 ### Chrome 上方出現「正在偵錯此瀏覽器」
 
 這是 Chrome 對擴充使用偵錯介面的固定提示，網頁本身看不到。

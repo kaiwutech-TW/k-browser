@@ -19,6 +19,7 @@ import { serveMcp } from './mcp/server.js';
 import { runShim } from './mcp/shim.js';
 import { CATEGORIES } from './sites.js';
 import { DEFAULT_PORT, startBridge } from './server.js';
+import { update, UpdateError } from './update.js';
 import { EXTENSION_ID, VERSION } from './version.js';
 
 const EXTENSION_DIR = fileURLToPath(new URL('../extension', import.meta.url));
@@ -53,6 +54,8 @@ const USAGE = `usage: k-browser [--port N] <command>
                          where Kav's decisions go: the local Kev (default), TypeSafe's JEV (shows what is sent, asks to
                          agree, keeps the key in ~/.k-browser/jev.key), or nowhere (handed back to the agent)
   kav [<dir> | off]      the Kav checkout run_flow uses (needs <dir>/.venv)
+  update                 git pull this checkout, npm ci and restart the bridge (then reload the
+                         extension at chrome://extensions)
   doctor                 check bridge, pairing and extension
   extension-path         print the unpacked extension directory`;
 
@@ -297,6 +300,15 @@ export async function main(argv) {
         return 0;
       }
       break;
+    }
+    case 'update': {
+      try {
+        await update({ port });
+        return 0;
+      } catch (e) {
+        console.error(e instanceof UpdateError || e instanceof Error ? e.message : String(e));
+        return 1;
+      }
     }
     case 'doctor': {
       /** @type {Record<string, any>} */

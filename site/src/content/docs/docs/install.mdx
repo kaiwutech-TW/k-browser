@@ -77,3 +77,14 @@ no other program can pretend to be one. `k-browser pair --rotate` makes a new on
 <Aside type="tip">
 The extension follows Chrome's language: Traditional Chinese, or English for every other language.
 </Aside>
+
+## Updating
+
+```sh
+k-browser update
+```
+
+It pulls the new code (`git pull --ff-only`), installs its packages (`npm ci`) and restarts the bridge. Then click ↻ for
+K-Browser at `chrome://extensions` in each Chrome profile that has it: Chrome does not let a program reload an unpacked
+extension. Agents follow by themselves. It stops without changing anything if files in the folder have local changes.
+If you downloaded a zip instead of cloning, download the new release and replace the folder.
