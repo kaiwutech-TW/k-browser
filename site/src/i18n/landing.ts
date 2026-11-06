@@ -4,9 +4,11 @@ export type Lang = 'en' | 'zh-TW';
 
 const en = {
 	htmlLang: 'en',
-	title: 'K-Browser — let local agents use your real Chrome, safely',
+	title: 'K-Browser — the MCP server that lets AI agents use your real Chrome, safely',
 	description:
-		'Open-source bridge that lets Claude Code, Codex, Antigravity and Gemini CLI drive your signed-in Chrome — only the tabs they open, never your focus, under rules you set.',
+		'K-Browser is an open-source MCP server and Chrome extension that lets Claude Code, Codex, Antigravity and Gemini CLI drive your signed-in Chrome — only the tabs they open, never your focus, under rules you set.',
+	disambiguation:
+		'An open-source MCP server and Chrome extension for AI coding agents on macOS; not the K Browser web browser for Windows, Android or iOS.',
 	docs: '/docs/',
 	home: '/',
 	ogImage: '/img/og-en.png',
@@ -14,9 +16,9 @@ const en = {
 	other: { label: '中文', href: '/zh-tw/', lang: 'zh-TW' },
 	nav: { how: 'How it works', safety: 'Safety', tools: 'Tools', docs: 'Docs' },
 	hero: {
-		eyebrow: 'Open source · MIT · macOS',
+		eyebrow: 'Open-source MCP server · MIT · macOS',
 		title: ['Your agents.', 'Your Chrome.', 'Your rules.'],
-		lead: 'K-Browser lets the agents on your Mac use the Chrome you are already signed in to — in a window you can watch. Each agent sees only the tabs it opened, never takes your keyboard, and hands the tab to you when a person is needed.',
+		lead: 'K-Browser is an open-source MCP server and Chrome extension: it lets the agents on your Mac use the Chrome you are already signed in to — in a window you can watch. Each agent sees only the tabs it opened, never takes your keyboard, and hands the tab to you when a person is needed.',
 		primary: 'Get started',
 		secondary: 'How it works',
 		terminalTitle: 'Install in a few minutes',
@@ -100,7 +102,7 @@ const en = {
 	faq: {
 		title: 'Questions',
 		items: [
-			{ q: 'What is K-Browser?', a: 'An open-source (MIT) bridge that lets the AI agents on your Mac — Claude Code, Codex, Antigravity, Gemini CLI — use the Chrome you are already signed in to, through an MCP server. Each agent works only in the tabs it opened, in a separate window you can watch.' },
+			{ q: 'What is K-Browser?', a: 'An open-source (MIT) MCP server and Chrome extension that lets the AI agents on your Mac — Claude Code, Codex, Antigravity, Gemini CLI — use the Chrome you are already signed in to. Each agent works only in the tabs it opened, in a separate window you can watch. It is not a web browser of its own, and not the K Browser apps for Windows, Android or iOS.' },
 			{ q: 'Which agents does it work with?', a: 'Any MCP client. `k-browser install` registers Claude Code, Codex, Antigravity and Gemini CLI for you. Other programs can get their own CDP endpoint with `k-browser endpoint <name>` — a limited subset of the Chrome DevTools Protocol, with the same rules applied.' },
 			{ q: 'Can an agent see my other tabs or my passwords?', a: 'No. An agent can list, read and act only on tabs it opened itself; your tabs and other agents’ tabs are invisible to it. Password fields are never read, and tokens, card and phone numbers are masked in what it gets back. Masking is rule-based, so still keep agents away from sites you would not trust them with.' },
 			{ q: 'Does K-Browser send my browsing data anywhere?', a: 'K-Browser itself runs on your Mac: the bridge listens only on 127.0.0.1, and its logs, off by default, stay in ~/.k-browser. What an agent reads goes to that agent’s own model, as with any tool it uses. The only cloud option K-Browser has is the JEV model for Kav flows, which stays off until you turn it on and agree to what it sends.' },
@@ -119,9 +121,10 @@ const en = {
 
 const zh: typeof en = {
 	htmlLang: 'zh-Hant-TW',
-	title: 'K-Browser:讓本機 agent 安全地使用你真正的 Chrome',
+	title: 'K-Browser:讓 AI agent 安全使用你真正 Chrome 的 MCP 工具',
 	description:
-		'開源工具，讓 Claude Code、Codex、Antigravity、Gemini CLI 操作你已登入的 Chrome:只碰它自己開的分頁、不搶你的焦點，規則由你決定。',
+		'K-Browser 是開源的 MCP server 和 Chrome 擴充，讓 Claude Code、Codex、Antigravity、Gemini CLI 操作你已登入的 Chrome:只碰它自己開的分頁、不搶你的焦點，規則由你決定。',
+	disambiguation: '給 macOS 上 AI agent 用的開源 MCP server 和 Chrome 擴充;不是 Windows、Android、iOS 上叫 K Browser 的瀏覽器。',
 	docs: '/zh-tw/docs/',
 	home: '/zh-tw/',
 	ogImage: '/img/og-zh.png',
@@ -129,9 +132,9 @@ const zh: typeof en = {
 	other: { label: 'EN', href: '/', lang: 'en' },
 	nav: { how: '運作方式', safety: '安全設計', tools: '工具', docs: '文件' },
 	hero: {
-		eyebrow: '開源 · MIT · macOS',
+		eyebrow: '開源 MCP server · MIT · macOS',
 		title: ['你的 agent，', '你的 Chrome，', '你的規則。'],
-		lead: 'K-Browser 讓你 Mac 上的 agent 使用你已經登入的 Chrome,在你看得到的視窗裡操作。每個 agent 只看得到自己開的分頁，不會搶走你的鍵盤，需要人處理時就把分頁交給你。',
+		lead: 'K-Browser 是開源的 MCP server 和 Chrome 擴充：讓你 Mac 上的 agent 使用你已經登入的 Chrome,在你看得到的視窗裡操作。每個 agent 只看得到自己開的分頁，不會搶走你的鍵盤，需要人處理時就把分頁交給你。',
 		primary: '開始使用',
 		secondary: '運作方式',
 		terminalTitle: '幾分鐘就能裝好',
@@ -210,7 +213,7 @@ const zh: typeof en = {
 	faq: {
 		title: '常見問題',
 		items: [
-			{ q: 'K-Browser 是什麼?', a: '一個開源(MIT)的橋接工具，透過 MCP server 讓你 Mac 上的 AI agent(Claude Code、Codex、Antigravity、Gemini CLI)使用你已經登入的 Chrome。每個 agent 只在自己開的分頁裡操作，放在你看得到的獨立視窗。' },
+			{ q: 'K-Browser 是什麼?', a: '一個開源(MIT)的 MCP server 和 Chrome 擴充，讓你 Mac 上的 AI agent(Claude Code、Codex、Antigravity、Gemini CLI)使用你已經登入的 Chrome。每個 agent 只在自己開的分頁裡操作，放在你看得到的獨立視窗。它本身不是瀏覽器，也不是 Windows、Android、iOS 上叫 K Browser 的 app。' },
 			{ q: '支援哪些 agent?', a: '任何 MCP client。`k-browser install` 會自動登記 Claude Code、Codex、Antigravity、Gemini CLI。其他程式可以用 `k-browser endpoint <名稱>` 拿到自己的 CDP 端點:Chrome DevTools Protocol 的有限子集，規則一樣適用。' },
 			{ q: 'agent 看得到我其他的分頁或密碼嗎?', a: '看不到。agent 只能列出、讀取、操作它自己開的分頁;你的分頁和別的 agent 的分頁對它都不存在。密碼欄位永遠不讀,token、卡號、電話號碼在回傳前會遮掉。遮蔽是依規則做的，所以不信任的網站還是不要交給 agent。' },
 			{ q: 'K-Browser 會把我的瀏覽資料送出去嗎?', a: 'K-Browser 本身跑在你的 Mac 上：橋接只聽 127.0.0.1,紀錄預設關閉，打開也只存在 ~/.k-browser。agent 讀到的內容會送給那個 agent 自己的模型，跟它用其他工具時一樣。K-Browser 唯一的雲端選項是 Kav 流程用的 JEV 模型，要你自己打開、同意要送出的內容才會啟用。' },

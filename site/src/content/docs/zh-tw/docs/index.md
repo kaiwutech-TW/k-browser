@@ -3,7 +3,7 @@ title: 總覽
 description: K-Browser 是什麼、三個部分怎麼配合，以及它絕對不做的事。
 ---
 
-K-Browser 讓你 Mac 上的 agent(Claude Code、Codex、Antigravity、Gemini CLI)使用**你自己的 Chrome**:用你已經登入的狀態，在你看得到的視窗裡操作。
+K-Browser 是開源的 MCP server 和 Chrome 擴充。它讓你 Mac 上的 agent(Claude Code、Codex、Antigravity、Gemini CLI)使用**你自己的 Chrome**:用你已經登入的狀態，在你看得到的視窗裡操作。
 
 agent 只看得到、只操作得了**它自己開的分頁**。你的其他分頁不會被列出、讀取或碰到。
 

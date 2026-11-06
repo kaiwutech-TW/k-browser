@@ -9,7 +9,7 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: 'K-Browser',
-			description: 'Let local agents use your real, signed-in Chrome — only the tabs they open, under rules you set.',
+			description: 'Open-source MCP server and Chrome extension that lets local AI agents use your real, signed-in Chrome — only the tabs they open, under rules you set.',
 			logo: { src: './src/assets/logo.svg' },
 			favicon: '/favicon.svg',
 			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/kaiwutech-TW/k-browser' }],

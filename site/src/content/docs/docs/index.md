@@ -3,8 +3,8 @@ title: Overview
 description: What K-Browser is, how its three parts fit together, and what it never does.
 ---
 
-K-Browser lets the agents on your Mac — Claude Code, Codex, Antigravity, Gemini CLI — use **your own Chrome**: the one you
-are already signed in to, in a window you can watch.
+K-Browser is an open-source MCP server and Chrome extension. It lets the agents on your Mac — Claude Code, Codex,
+Antigravity, Gemini CLI — use **your own Chrome**: the one you are already signed in to, in a window you can watch.
 
 An agent only sees and controls **the tabs it opened itself**. Your other tabs are never listed, read or touched.
 
