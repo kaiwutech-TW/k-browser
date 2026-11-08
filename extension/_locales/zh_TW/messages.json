@@ -328,5 +328,14 @@
   },
   "panelProfiles": {
     "message": "設定檔"
+  },
+  "approvalWaiting": {
+    "message": "請你允許:{0}"
+  },
+  "btnAllow": {
+    "message": "允許"
+  },
+  "btnDeny": {
+    "message": "拒絕"
   }
 }

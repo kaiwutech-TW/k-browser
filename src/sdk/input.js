@@ -256,9 +256,12 @@ export class Input {
    * Type text into whatever has focus: US-keyboard characters as key presses (Shift where a real keyboard needs it),
    * everything else with Input.insertText. `check` runs before each key and each insertion (callers check the focus
    * is still where it should be), `guard` right before each send. Returns how much went in as a non-key insertion.
-   * @param {string} text @param {{ fast?: boolean, check?: Check, guard?: Guard }} [o]
+   * `asKeys`: a character that is not on a US keyboard goes in as a key press carrying that character (key = the
+   * character, no code), as a keyboard layout that has it would send, instead of an insertion: a <select>'s
+   * type-to-select listens to key presses only (measured: insertText does not move it).
+   * @param {string} text @param {{ fast?: boolean, check?: Check, guard?: Guard, asKeys?: boolean }} [o]
    */
-  async type(text, { fast = false, check, guard } = {}) {
+  async type(text, { fast = false, check, guard, asKeys = false } = {}) {
     let inserted = 0;
     let run = '';
     const flush = async () => {
@@ -274,7 +277,7 @@ export class Input {
       run = '';
     };
     for (const ch of text) {
-      const k = keyForChar(ch);
+      const k = keyForChar(ch) ?? (asKeys ? { key: ch, code: '', keyCode: 0, text: ch } : null);
       if (!k) {
         run += ch;
         continue;

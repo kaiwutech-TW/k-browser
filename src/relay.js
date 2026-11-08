@@ -23,6 +23,7 @@ import { Activity, Feed, readConfig } from './activity.js';
 import * as auth from './auth.js';
 import * as files from './files.js';
 import * as model from './model.js';
+import { Approvals } from './approvals.js';
 import { Handoffs } from './handoff.js';
 import { Observer } from './observe.js';
 import { LEGACY_CONTEXT } from './profiles.js';
@@ -41,10 +42,10 @@ export const BROWSER_METHODS = ['Browser.getVersion', 'Target.getTargets', 'Targ
   'Target.closeTarget', 'Target.activateTarget', 'Target.attachToTarget', 'Target.detachFromTarget', 'Target.setDiscoverTargets',
   'Target.getBrowserContexts', 'KBrowser.profiles', 'KBrowser.mark', 'KBrowser.queryNetwork', 'KBrowser.getNavigation',
   'KBrowser.handoff', 'KBrowser.handoffStatus', 'KBrowser.cancelHandoff', 'KBrowser.tabHandoff', 'KBrowser.reportResult',
-  'KBrowser.closeUnlessHandedOff'];
+  'KBrowser.closeUnlessHandedOff', 'KBrowser.requestApproval', 'KBrowser.approvalStatus'];
 /** Bookkeeping reads a client repeats all the time: not worth a line in the activity record. */
 const QUIET = new Set(['Browser.getVersion', 'Target.getTargets', 'Target.getTargetInfo', 'Target.setDiscoverTargets', 'Target.getBrowserContexts', 'KBrowser.profiles',
-  'KBrowser.queryNetwork', 'KBrowser.getNavigation', 'KBrowser.tabHandoff', 'KBrowser.handoffStatus']);
+  'KBrowser.queryNetwork', 'KBrowser.getNavigation', 'KBrowser.tabHandoff', 'KBrowser.handoffStatus', 'KBrowser.approvalStatus']);
 /** Bridge-side tab ids past any Chrome tab id: used when the extension's own number is taken (another profile, an
  * earlier extension lifetime). */
 const SPARE_TAB_IDS = 3_000_000_000;
@@ -205,6 +206,8 @@ class Target {
     this.closing = false;
     /** whether it is the tab its window shows (null: not known yet) @type {boolean | null} */
     this.active = null;
+    /** the target Chrome replaced with this one (tabs.onReplaced: a prerendered page shown, a discarded tab restored) @type {string | null} */
+    this.replaces = null;
   }
 
   /** @param {boolean} attached */
@@ -213,6 +216,7 @@ class Target {
     const d = { targetId: this.targetId, type: 'page', title: this.title, url: this.url, attached, canAccessOpener: false,
       browserContextId: this.slot?.context ?? DEFAULT_CONTEXT };
     if (this.openerId) d.openerId = this.openerId;
+    if (this.replaces) d.kbReplaces = this.replaces;
     return d;
   }
 }
@@ -342,6 +346,15 @@ export class Relay {
     this.observe = new Observer();
     /** hand-offs to the user (handoff.js); the extension shows the waiting ones */
     this.handoffs = new Handoffs({ ...(handoffTtlMs ? { ttlMs: handoffTtlMs } : {}), changed: () => this.#syncHandoffs() });
+    /** approvals the user gives in the side panel (approvals.js): consequential WebMCP tools */
+    this.approvals = new Approvals({ changed: () => this.#pushState() });
+    /** WebMCP tools Chrome reported per tab (WebMCP.toolsAdded / toolsRemoved, whoever enabled the domain), by
+     * "<frameId>\n<name>": whether the site marks the tool consequential, and the number of that registration (every
+     * toolsAdded is a new one: another document, or the page registering the name again). invokeTool is checked
+     * against it, and an approval is bound to the registration it was asked for
+     * @type {Map<number, Map<string, { consequential: boolean, reg: number }>>} */
+    this.webmcpTools = new Map();
+    this.webmcpRegs = 0;
     /** what each client did (activity.js), for the side panel */
     this.activity = activity;
     this.panelResults = 0;
@@ -543,6 +556,9 @@ export class Relay {
         return { handoffId: h.handoffId, principal: full?.owner ?? '', targetId: full?.targetId ?? '', reason: text(h.reason, 200), source: 'client', since: full?.createdAt ?? 0,
           profile: slot?.name ?? null, context: slot?.context ?? null };
       }),
+      // K-Browser's own wording around the tool's name, the page's origin and the arguments: plain text for the panel
+      approvals: this.approvals.waiting().map((a) => ({ approvalId: a.approvalId, principal: a.owner, targetId: a.targetId,
+        title: text(a.title, 200), detail: text(a.detail, 2000), since: a.createdAt, profile: this.tabSlot.get(a.tabId)?.name ?? null })),
     };
   }
 
@@ -642,6 +658,11 @@ export class Relay {
         if (!h || h.state !== 'waiting') return done(false, 'that hand-off is not waiting (any more)');
         if (this.tabSlot.get(h.tabId) !== slot) return done(false, 'that tab is in another Chrome profile: return it from there');
         return done(this.handoffs.returned(h.handoffId, (x) => this.targets.get(x.targetId)?.url ?? ''));
+      }
+      if (op === 'approve') {
+        // the user's answer to one waiting approval of that client (WebMCP: a tool the site marks consequential)
+        if (typeof msg.allow !== 'boolean') return done(false, 'allow: true or false');
+        return this.approvals.decide(principal, msg.approvalId, msg.allow) ? done(true) : done(false, 'that request is not waiting (any more)');
       }
       if (op === 'closeTabs') {
         const tabs = [...this.targets.values()].filter((t) => t.owner === principal);
@@ -803,7 +824,7 @@ export class Relay {
         this.#debuggerEvent(msg.tabId, msg.sessionId ?? null, msg.method, msg.params ?? {});
         break;
       case 'dbg.detach':
-        this.#debuggerDetached(msg.tabId);
+        this.#debuggerDetached(msg.tabId, typeof msg.reason === 'string' && /^[a-z_]{1,40}$/.test(msg.reason) ? msg.reason : undefined);
         break;
       case 'tab.created':
         this.#spawn(this.#adopt(slot, link, msg.tabId, msg.openerTabId ?? null));
@@ -812,8 +833,9 @@ export class Relay {
         this.#bump(msg.removedTabId);
         const old = this.byTab.get(msg.removedTabId);
         const adopting = this.pendingAdopt.get(msg.removedTabId); // replaced before its adoption finished
-        this.#targetGone(msg.removedTabId);
-        if (old) this.#spawn(this.#adopt(slot, link, msg.addedTabId, null, old.owner, old.targetId));
+        this.#targetGone(msg.removedTabId, 'replaced');
+        // kbReplaces on the new target: a client that knew the old one can keep calling it the same tab
+        if (old) this.#spawn(this.#adopt(slot, link, msg.addedTabId, null, old.owner, old.targetId, old.targetId));
         else if (adopting) this.#spawn(this.#adopt(slot, link, msg.addedTabId, null, adopting.owner, adopting.openerId));
         break;
       }
@@ -846,7 +868,7 @@ export class Relay {
       case 'tab.removed':
         this.early.delete(msg.tabId);
         this.#bump(msg.tabId);
-        this.#targetGone(msg.tabId);
+        this.#targetGone(msg.tabId, 'closed');
         break;
       case 'handoff.return': { // the user pressed Return (交還) in the extension popup: of this profile's own tabs only
         const h = [...this.handoffs.items.values()].find((x) => x.handoffId === msg.handoffId);
@@ -873,6 +895,7 @@ export class Relay {
 
   /** @param {number} tabId @param {string | null} child @param {string} method @param {Record<string, any>} params */
   #debuggerEvent(tabId, child, method, params) {
+    if (method === 'WebMCP.toolsAdded' || method === 'WebMCP.toolsRemoved') this.#webmcpTools(tabId, method, params);
     const t = this.byTab.get(tabId);
     if (t) this.observe.event(t.targetId, t.owner, child, method, params);
     if (method === 'Inspector.targetCrashed' && t) {
@@ -903,7 +926,9 @@ export class Relay {
   }
 
   /** @param {number} tabId */
-  #debuggerDetached(tabId) {
+  /** @param {number} tabId @param {string} [reason] Chrome's (chrome.debugger.onDetach: target_closed, canceled_by_user),
+   * passed on as kbReason (not a CDP field: clients that do not know it ignore it) */
+  #debuggerDetached(tabId, reason) {
     this.attached.delete(tabId);
     const targetId = this.byTab.get(tabId)?.targetId ?? '';
     this.observe.disabled(targetId, undefined, 'the debugger detached');
@@ -911,15 +936,16 @@ export class Relay {
       for (const [sid, s] of [...conn.sessions]) {
         if (s.tabId !== tabId) continue;
         conn.sessions.delete(sid);
-        if (s.child === null) conn.emit('Target.detachedFromTarget', { sessionId: sid, targetId });
+        if (s.child === null) conn.emit('Target.detachedFromTarget', { sessionId: sid, targetId, ...(reason ? { kbReason: reason } : {}) });
       }
     }
   }
 
   /** A popup / new tab opened from an owned tab joins its opener's owner. Nothing else is adopted.
    * Both tab ids are the bridge's, given within this profile, so an opener is only ever one of its own tabs.
-   * @param {Slot} slot @param {ExtensionLink} link @param {number} tabId @param {number | null} openerTab @param {string | null} [owner] @param {string | null} [openerId] */
-  async #adopt(slot, link, tabId, openerTab, owner = null, openerId = null) {
+   * @param {Slot} slot @param {ExtensionLink} link @param {number} tabId @param {number | null} openerTab @param {string | null} [owner] @param {string | null} [openerId]
+   * @param {string | null} [replaces] the target it replaces (tab.replaced) */
+  async #adopt(slot, link, tabId, openerTab, owner = null, openerId = null, replaces = null) {
     if (owner === null) {
       const opener = openerTab === null ? undefined : this.byTab.get(openerTab);
       if (!opener || opener.slot !== slot) return;
@@ -946,6 +972,7 @@ export class Relay {
     if (slot.ext !== link || this.byTab.has(tabId) || !this.#sameTab(tabId, stamp) || slot.toExt.get(tabId) !== extId) return;
     const adopted = new Target(info.targetId, tabId, owner, info.url ?? '', info.title ?? '', openerId, slot);
     if (typeof info.active === 'boolean') adopted.active = info.active;
+    adopted.replaces = replaces;
     await this.#register(slot, link, adopted);
   }
 
@@ -967,15 +994,18 @@ export class Relay {
   }
 
   /** @param {number} tabId */
-  #targetGone(tabId) {
+  /** @param {number} tabId @param {'closed' | 'replaced'} [reason] passed on as kbReason */
+  #targetGone(tabId, reason) {
     const t = this.byTab.get(tabId);
     if (!t) return;
     this.byTab.delete(tabId);
     this.targets.delete(t.targetId);
-    this.#debuggerDetached(tabId);
+    this.#debuggerDetached(tabId, reason === 'replaced' ? 'target_replaced' : undefined);
     this.observe.forget(t.targetId);
     this.handoffs.invalidate((h) => h.targetId === t.targetId, 'the tab was closed');
-    this.#broadcastTarget(t.owner, 'Target.targetDestroyed', { targetId: t.targetId });
+    this.approvals.invalidate((a) => a.targetId === t.targetId, 'the tab was closed');
+    this.webmcpTools.delete(tabId);
+    this.#broadcastTarget(t.owner, 'Target.targetDestroyed', { targetId: t.targetId, ...(reason ? { kbReason: reason } : {}) });
   }
 
   // ---------- client side ----------
@@ -999,6 +1029,7 @@ export class Relay {
   /** Disconnect every client whose principal no longer exists (client removed). Polled by the bridge. @param {Set<string>} live */
   revoke(live) {
     this.handoffs.invalidate((h) => !live.has(h.owner), 'the client was revoked');
+    this.approvals.invalidate((a) => !live.has(a.owner), 'the client was revoked');
     for (const c of [...this.conns]) {
       if (!live.has(c.client)) {
         this.log(`k-browser: client ${c.principal.name} revoked: disconnecting`);
@@ -1063,6 +1094,51 @@ export class Relay {
     }
   }
 
+  /** What Chrome says about the tools of a tab. @param {number} tabId @param {string} method @param {Record<string, any>} params */
+  #webmcpTools(tabId, method, params) {
+    const tools = this.webmcpTools.get(tabId) ?? new Map();
+    for (const x of Array.isArray(params.tools) ? params.tools : []) {
+      if (typeof x?.frameId !== 'string' || typeof x.name !== 'string') continue;
+      const key = `${x.frameId}\n${x.name}`;
+      // a replay (another WebMCP.enable) counts as new too: an approval waiting across it is refused, never misused
+      if (method === 'WebMCP.toolsAdded') tools.set(key, { consequential: x.annotations?.consequential === true, reg: ++this.webmcpRegs });
+      else tools.delete(key);
+    }
+    this.webmcpTools.set(tabId, tools);
+  }
+
+  /** The approval binding of one WebMCP call: tab, frame, tool, that registration of it and the exact input.
+   * @param {string} targetId @param {Record<string, any>} p @param {number} reg */
+  static webmcpBinding(targetId, p, reg) {
+    return JSON.stringify([targetId, String(p.frameId), String(p.toolName), reg, p.input ?? null]);
+  }
+
+  /** @param {number} tabId @param {Record<string, any>} p */
+  #webmcpTool(tabId, p) {
+    return this.webmcpTools.get(tabId)?.get(`${p.frameId}\n${p.toolName}`);
+  }
+
+  /**
+   * WebMCP.invokeTool, checked here whoever sends it (the MCP layer or raw CDP): a tool Chrome has not reported for
+   * the tab is refused (its marks are not known); one the site marks consequential needs an approval the user gave in
+   * the panel for exactly this call (kbApprovalId), used up by it. The approval id is not passed on to Chrome.
+   * @param {CdpConn} conn @param {Session} s @param {Record<string, any>} params @returns {Record<string, any>} the params to send
+   */
+  #checkInvoke(conn, s, params) {
+    const t = this.byTab.get(s.tabId);
+    if (!t) throw new CdpError('no such tab', -32000, { refused: true });
+    const tool = this.#webmcpTool(s.tabId, params);
+    if (!tool) {
+      throw new CdpError('K-Browser has not seen this tool registered in this tab: send WebMCP.enable (it lists the registered tools) first; nothing was called', -32000, { refused: true });
+    }
+    const { kbApprovalId, ...rest } = params;
+    if (tool.consequential && !this.approvals.use(conn.client, kbApprovalId, Relay.webmcpBinding(t.targetId, rest, tool.reg))) {
+      throw new CdpError('the site marks this tool consequential: it needs the user\'s Allow in the K-Browser side panel for exactly this call '
+        + '(KBrowser.requestApproval, then kbApprovalId); nothing was called', -32000, { refused: true });
+    }
+    return rest;
+  }
+
   /** @param {CdpConn} conn @param {string} sid @param {unknown} method @param {Record<string, any>} params */
   async #sessionCommand(conn, sid, method, params) {
     const s = conn.sessions.get(sid);
@@ -1070,6 +1146,7 @@ export class Relay {
     if (method === 'KBrowser.setFileInput') return this.#setFileInput(conn, s, params);
     const denied = policy.check(method, params);
     if (denied) throw new CdpError(denied, -32000, { refused: true });
+    if (method === 'WebMCP.invokeTool') params = this.#checkInvoke(conn, s, params);
     const result = await this.#tabCall(s.tabId, 'dbg.send', { sessionId: s.child, method, params });
     // The observation log follows what the session really has on (never switched on by the bridge itself).
     const t = this.byTab.get(s.tabId);
@@ -1183,6 +1260,30 @@ export class Relay {
         return view(this.handoffs.get(conn.client, p.handoffId), p.handoffId);
       case 'KBrowser.cancelHandoff':
         return view(this.handoffs.cancel(conn.client, p.handoffId), p.handoffId);
+      case 'KBrowser.requestApproval': {
+        // one WebMCP call (frameId, toolName, input): what the panel shows is written here from it, not by the client
+        const t = this.#owned(conn, p.targetId);
+        if (typeof p.frameId !== 'string' || typeof p.toolName !== 'string' || !p.input || typeof p.input !== 'object' || Array.isArray(p.input)) {
+          throw new CdpError('KBrowser.requestApproval needs frameId, toolName and input (the WebMCP call to allow)');
+        }
+        const tool = this.#webmcpTool(t.tabId, p);
+        if (!tool) throw new CdpError('K-Browser has not seen this tool registered in this tab: send WebMCP.enable (it lists the registered tools) first');
+        let origin = 'unknown site';
+        try { origin = new URL(t.url).origin; } catch { /* about:blank and the like */ }
+        const title = `${p.toolName.slice(0, 100)} @ ${origin}${p.frameId === t.targetId ? '' : ' (in a frame of the page)'}`;
+        const json = JSON.stringify(p.input, null, 1);
+        const detail = json.length > 1900 ? `${json.slice(0, 1900)}…` : json;
+        try {
+          const a = this.approvals.request(conn.client, t, title, detail, Relay.webmcpBinding(t.targetId, p, tool.reg));
+          return { approvalId: a.approvalId, state: a.state };
+        } catch (e) {
+          throw new CdpError(e instanceof Error ? e.message : String(e));
+        }
+      }
+      case 'KBrowser.approvalStatus': {
+        const a = this.approvals.get(conn.client, p.approvalId); // used up only by the call it allows (#checkInvoke)
+        return a ? { approvalId: a.approvalId, state: a.state, why: a.why } : { approvalId: String(p.approvalId ?? ''), state: 'invalidated', why: 'this bridge does not know it (it may have restarted)' };
+      }
       case 'KBrowser.reportResult': {
         // what the client's wait_for found: kept as judged by the SDK, never as verified by the bridge
         const t = this.#owned(conn, p.targetId);

@@ -34,4 +34,4 @@ agent 只看得到、只操作得了**它自己開的分頁**。你的其他分�
 
 - [安裝](/zh-tw/docs/install/):大約十分鐘。
 - [安全設計](/zh-tw/docs/safety/):你怎麼保有控制權。
-- [agent 工具](/zh-tw/docs/tools/):agent 拿到的 15 個工具。
+- [agent 工具](/zh-tw/docs/tools/):agent 拿到的 16 個工具。

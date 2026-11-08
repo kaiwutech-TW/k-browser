@@ -328,5 +328,14 @@
   },
   "panelProfiles": {
     "message": "profiles"
+  },
+  "approvalWaiting": {
+    "message": "Allow this? {0}"
+  },
+  "btnAllow": {
+    "message": "Allow"
+  },
+  "btnDeny": {
+    "message": "Deny"
   }
 }

@@ -106,6 +106,25 @@ export class Worlds {
     return unwrap(r);
   }
 
+  /** The backendNodeId of the first element matching a CSS selector in the frame's document, or null; bad_argument
+   * for a selector that does not parse. @param {string} frameId @param {string} selector */
+  async nodeFor(frameId, selector) {
+    const w = await this.world(frameId);
+    const expression = `(() => { try { return document.querySelector(${JSON.stringify(selector)}); } catch { return 'bad'; } })()`;
+    const r = await this.#send(w.stamp, 'Runtime.evaluate', { expression, contextId: w.contextId, returnByValue: false }, 'no_frame');
+    if (r.exceptionDetails) throw new SdkError('script_error', 'the selector could not be run');
+    if (r.result?.type === 'string') throw new SdkError('bad_argument', `not a valid CSS selector: ${selector.slice(0, 200)}`);
+    const objectId = r.result?.objectId;
+    if (!objectId) return null;
+    try {
+      const d = await this.#send(w.stamp, 'DOM.describeNode', { objectId }, 'no_frame');
+      if (!this.tree.same(w.stamp)) throw new SdkError('no_frame', `frame ${frameId} changed while the selector ran; take a new snapshot`);
+      return /** @type {number} */ (d.node.backendNodeId);
+    } finally {
+      await this.release(w.stamp, objectId);
+    }
+  }
+
   /** A remote object for a DOM node, in the frame's isolated world. @param {Stamp} stamp @param {number} backendNodeId */
   async resolve(stamp, backendNodeId) {
     const w = await this.world(stamp.frameId);

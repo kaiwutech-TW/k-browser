@@ -640,6 +640,10 @@ test('a replaced tab retires the old target and adopts the new one', async () =>
   const ids = (await a.call('Target.getTargets')).targetInfos.map((/** @type {any} */ t) => t.targetId);
   assert.deepEqual(ids, [ext.tabs.get(newTab)?.targetId]);
   assert.ok(!ids.includes(targetId));
+  // why the old one went, and which one the new one replaces (field report 2026-11-09 #5: the agent lost its tab)
+  assert.equal(a.named('Target.targetDestroyed')[0].params.kbReason, 'replaced');
+  const created = a.named('Target.targetCreated').map((e) => e.params.targetInfo).find((/** @type {any} */ t) => t.targetId !== targetId);
+  assert.equal(created.kbReplaces, targetId);
 });
 
 // ---------- races on close and adoption; limits and logging ----------

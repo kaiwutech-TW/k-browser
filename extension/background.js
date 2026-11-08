@@ -411,7 +411,7 @@ function toPanel(port, batch) {
     }
   });
 }
-const PANEL_OPS = new Set(['show', 'return', 'closeTabs', 'revoke', 'model', 'decisionLog', 'sites', 'screenshot', 'eval']);
+const PANEL_OPS = new Set(['show', 'return', 'closeTabs', 'revoke', 'model', 'decisionLog', 'sites', 'screenshot', 'eval', 'approve']);
 /** settings of one client, named as the panel showed it: name (as on disk, at most 32 characters) and principal */
 const CLIENT_OPS = new Set(['sites', 'screenshot', 'eval']);
 
@@ -441,6 +441,12 @@ function panelCommand(m) {
     if (m.op === 'eval' && m.on) return false; // the panel only turns eval off
     if (m.op === 'sites' && !short(m.category, 32)) return false;
     sendEvent({ t: 'ev', ev: 'panel.cmd', op: m.op, name: m.name, principal: m.principal, on: m.on, ...(m.op === 'sites' ? { category: m.category } : {}) });
+    return true;
+  }
+  if (m.op === 'approve') {
+    // the user's Allow / Deny on one approval (a consequential WebMCP tool); the bridge checks the client and the id again
+    if (typeof m.principal !== 'string' || typeof m.approvalId !== 'string' || typeof m.allow !== 'boolean') return false;
+    sendEvent({ t: 'ev', ev: 'panel.cmd', op: 'approve', principal: m.principal.slice(0, 64), approvalId: m.approvalId.slice(0, 64), allow: m.allow });
     return true;
   }
   if (typeof m.principal !== 'string') return false;

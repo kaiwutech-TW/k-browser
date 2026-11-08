@@ -193,11 +193,9 @@ test('typing, a double click, and a native <select> chosen with trusted keys onl
     }
     const m = await marks(tab);
     assert.deepEqual([m.inputTrusted, m.changeTrusted], ['true', 'true'], 'input and change came from trusted keys');
-    if (process.platform === 'darwin') {
-      // not on a US keyboard, and arrow keys open the native menu on macOS: refused, not set from script
-      await failsWith(() => tab.select(station, { label: '台北' }), 'unsupported');
-      assert.equal(await value(), 'a');
-    }
+    // not on a US keyboard: typed as key presses carrying the characters (type-to-select ignores insertText)
+    assert.equal(/** @type {any} */ (await tab.select(station, { label: '台北' })).how, 'typed the label');
+    assert.equal(await value(), 'tp');
     await failsWith(() => tab.select(station, { label: 'Cherry' }), 'bad_argument');
 
     // review ③: a covered select is not chosen; typing stops when a handler moves the focus elsewhere
@@ -346,6 +344,69 @@ test('review ④: a wheel over a ref that something covers once the pointer arri
   const tab = await tabAt('/swap?mode=cover');
   try {
     await failsWith(async () => tab.scroll({ ref: refOf(await tab.snapshot(), 'target'), dy: 400 }), 'occluded');
+  } finally {
+    await tab.close();
+  }
+});
+
+test('field report 2026-11-09: Chinese <select> labels, date and month fields typed part by part, number replace, ::after over a button', { skip }, async () => {
+  const tab = await tabAt('/act-fields');
+  try {
+    let snap = await tab.snapshot();
+    const val = (/** @type {string} */ label) => tab.evaluate((/** @type {string} */ l) => /** @type {HTMLInputElement} */ (document.querySelector(`[aria-label="${l}"]`)).value, [label]);
+    // 1. labels in Chinese only, the second sharing its first characters with another option
+    for (const [label, v] of [['依期別', 'p'], ['依日期', 'd'], ['依年月', 'm']]) {
+      const r = await tab.select(refOf(snap, 'period'), { label });
+      assert.equal([r.changed, await val('period')].join(), `true,${v}`, label);
+    }
+    await tab.select(refOf(snap, 'kind'), { label: '手續費退回' });
+    assert.equal(await val('kind'), 'f2');
+    await tab.select(refOf(snap, 'kind'), { value: 'f' });
+    assert.equal(await val('kind'), 'f');
+    const m = await marks(tab);
+    assert.deepEqual([m.changeTrusted, m.inputTrusted], ['true', 'true']);
+
+    // 2. a date field holding a value: every part replaced; a month field; YYYY/MM/DD refused before any key
+    const d = await tab.type(refOf(snap, 'when'), '2026-01-15');
+    assert.equal(/** @type {any} */ (d).fieldValue, '2026-01-15');
+    assert.equal(await val('when'), '2026-01-15');
+    await tab.type(refOf(snap, 'which month'), '2025-12');
+    assert.equal(await val('which month'), '2025-12');
+    await failsWith(() => tab.type(refOf(snap, 'when'), '2026/02/03'), 'bad_argument');
+    await failsWith(() => tab.type(refOf(snap, 'what time'), '10:30'), 'unsupported');
+    assert.equal(await val('when'), '2026-01-15');
+    // a part of the field is a ref of its own (spinbutton): it is not "covered" by the field around it
+    snap = await tab.snapshot();
+    const day = snap.refs.filter((r) => r.role === 'spinbutton')[2];
+    assert.ok(day, 'the date field\'s parts are refs');
+    await tab.type(day.ref, '20');
+    assert.equal(await val('when'), '2026-01-20');
+
+    // 3. a number field: replace clears it with Backspace and proves it empty; one that ignores Backspace: result_unknown
+    const n = await tab.type(refOf(snap, 'amount'), '528', { replace: true });
+    assert.equal([/** @type {any} */ (n).fieldValue, await val('amount')].join(), '528,528');
+    await failsWith(() => tab.type(refOf(snap, 'sticky amount'), '5', { replace: true }), 'result_unknown');
+    assert.equal(await val('sticky amount'), '7', 'nothing typed after the failed clear');
+    // 8. a page that puts the caret back at the start after each key: 533 comes out scrambled, and is reported as such
+    await assert.rejects(() => tab.type(refOf(snap, 'caret amount'), '533', { replace: true }),
+      (e) => e instanceof SdkError && e.code === 'result_unknown' && /its value is "335"/.test(e.message) ? true : assert.fail(String(e)));
+
+    // 6. a snapshot of one element's subtree only
+    const part = await tab.snapshot({ within: '#wrap' });
+    assert.deepEqual(part.refs.map((r) => r.name), ['wrapped']);
+    await assert.rejects(() => tab.snapshot({ within: '#nothing-here' }), (e) => e instanceof SdkError && e.code === 'bad_argument');
+    await assert.rejects(() => tab.snapshot({ within: '##' }), (e) => e instanceof SdkError && e.code === 'bad_argument');
+    snap = await tab.snapshot();
+
+    // retest 2026-11-09: a scroll over a ref that a fixed bar covers in part tries other points of it; fully covered: no wheel
+    await tab.scroll({ ref: refOf(snap, 'half covered'), dy: 40 }, { fast: true });
+    await failsWith(() => tab.scroll({ ref: refOf(snap, 'all covered'), dy: 40 }, { fast: true }), 'occluded');
+
+    // 4. a ::after of the button itself is the button; its wrapper's ::after really takes the click
+    await tab.click(refOf(snap, 'own after'));
+    assert.equal((await marks(tab)).last, 'own after');
+    await assert.rejects(() => tab.click(refOf(snap, 'wrapped')),
+      (e) => e instanceof SdkError && e.code === 'occluded' && /the ::after of <div id="wrap">/.test(e.message) ? true : assert.fail(String(e)));
   } finally {
     await tab.close();
   }

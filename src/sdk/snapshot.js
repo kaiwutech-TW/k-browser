@@ -9,13 +9,17 @@
 // A ref names one DOM node in one frame document: it is issued only for nodes that carry backendDOMNodeId (an
 // optional field: CSS-generated text and inline text boxes lack it) and is valid only while the frame's stamp holds.
 
+import { SdkError } from './cdp.js';
+
 /** @typedef {import('./frames.js').Stamp} Stamp */
 /** @typedef {{ ref: string, stamp: Stamp, backendNodeId: number, role: string, name: string }} RefEntry */
 
 /** Roles that can be acted on: these get refs by default. */
 export const INTERACTIVE = new Set(['button', 'link', 'textbox', 'searchbox', 'checkbox', 'radio', 'combobox', 'listbox',
   'option', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'tab', 'switch', 'slider', 'spinbutton', 'treeitem',
-  'MenuListPopup', 'MenuListOption', 'ListBoxOption', 'DisclosureTriangle', 'textField']);
+  'MenuListPopup', 'MenuListOption', 'ListBoxOption', 'DisclosureTriangle', 'textField',
+  // <input type=date> is "Date"; month, week and datetime-local are "DateTime"; time is "InputTime"; color "ColorWell"
+  'Date', 'DateTime', 'InputTime', 'ColorWell']);
 /** A named image that is not inside a link or button may be clickable by itself (a date picker's calendar icon, deferred
  * #31): it gets a ref by default too. Images inside links and buttons (product grids) stay out: the link is the target. */
 const IMAGE_ROLES = new Set(['image', 'img']);
@@ -46,10 +50,11 @@ function clip(s) {
 
 /**
  * `hide`: frames not to read at all (a site policy, src/mcp/sites.js): each shows as one line, nothing of its content.
+ * `within`: only the subtree of this node (and the frames inside it); a node not in the accessibility tree is bad_argument.
  * @param {{ client: import('./cdp.js').CdpClient, tree: import('./frames.js').FrameTree }} tab
- * @param {{ seq: number, full?: boolean, maxLines?: number, maxBytes?: number, hide?: Set<string> }} o
+ * @param {{ seq: number, full?: boolean, maxLines?: number, maxBytes?: number, hide?: Set<string>, within?: { frameId: string, backendNodeId: number } }} o
  */
-export async function takeSnapshot({ client, tree }, { seq, full = false, maxLines = DEFAULT_MAX_LINES, maxBytes = DEFAULT_MAX_BYTES, hide = new Set() }) {
+export async function takeSnapshot({ client, tree }, { seq, full = false, maxLines = DEFAULT_MAX_LINES, maxBytes = DEFAULT_MAX_BYTES, hide = new Set(), within }) {
   const started = Date.now();
   /** @type {string[]} */ const notes = [];
   const frames = tree.order().filter((f) => !hide.has(f.id)).map((f) => tree.stamp(f.id)).filter((s) => s !== null);
@@ -128,8 +133,8 @@ export async function takeSnapshot({ client, tree }, { seq, full = false, maxLin
   /** @type {Set<string>} */
   const rendered = new Set();
 
-  /** @param {string} frameId @param {number} depth @param {boolean} header */
-  const renderFrame = (frameId, depth, header) => {
+  /** @param {string} frameId @param {number} depth @param {boolean} header @param {any} [start] the node to start from (within) */
+  const renderFrame = (frameId, depth, header, start = null) => {
     if (hide.has(frameId)) {
       if (!rendered.has(frameId) && frameId !== tree.mainFrameId && !hide.has(tree.frames.get(frameId)?.parentId ?? '')) {
         emit(`${'  '.repeat(depth)}- frame hidden by site policy`);
@@ -176,11 +181,17 @@ export async function takeSnapshot({ client, tree }, { seq, full = false, maxLin
         if (c) walk(c, next, inTarget || (!n.ignored && OUTER_TARGETS.has(r)));
       }
     };
-    walk(doc.root, d0, false);
-    for (const child of orphans.get(frameId) ?? []) renderFrame(child, d0, true);
+    walk(start ?? doc.root, d0, false);
+    if (!start) for (const child of orphans.get(frameId) ?? []) renderFrame(child, d0, true);
   };
-  if (tree.mainFrameId) renderFrame(tree.mainFrameId, 0, false);
-  for (const frameId of docs.keys()) renderFrame(frameId, 0, true); // anything not reached from the main frame
+  if (within) {
+    const start = [...(docs.get(within.frameId)?.byId.values() ?? [])].find((n) => n.backendDOMNodeId === within.backendNodeId);
+    if (!start) throw new SdkError('bad_argument', 'the element to snapshot within is not in the accessibility tree (hidden, or not rendered)');
+    renderFrame(within.frameId, 0, false, start);
+  } else {
+    if (tree.mainFrameId) renderFrame(tree.mainFrameId, 0, false);
+    for (const frameId of docs.keys()) renderFrame(frameId, 0, true); // anything not reached from the main frame
+  }
 
   if (truncated) notes.push(`truncated: showing ${lines.length} of ${kept} lines (limits: ${maxLines} lines, ${maxBytes} bytes)`);
   return {

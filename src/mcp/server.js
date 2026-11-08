@@ -43,6 +43,7 @@ import { INSTRUCTIONS, TOOLS } from './tools.js';
 import { wrap } from './untrusted.js';
 
 const MAX_STEPS = 10;
+const DROPPED_MS = 10_000; // how long a tab found missing can still come back as Chrome's replacement of it
 const POPUP_GRACE_MS = 300; // after an act, how long a popup it opened has to show up (the bridge adopts it first)
 const TELL_USER = 'A K-Browser tab needs the user: click the K-Browser icon in Chrome\'s toolbar, press Show (顯示) to see the tab, '
   + 'do what is needed there, then press Return (交還). Ask needs_human {action:"status"} afterwards.';
@@ -94,11 +95,12 @@ class Blocked extends Error {
 
 /** @typedef {{ head: Record<string, any>, page?: unknown, image?: Buffer, isError?: boolean }} Out */
 /** space: the group the agent put the tab in (tabs open {space}); kept in this MCP session only.
- * seq / dseq: the highest snapshot and dialog numbers of the tab so far, kept across Tab objects (a reattach, a new
- * worker) so that a ref or a dialog id is never issued twice: an old one is stale, never another node or dialog.
+ * seq / dseq / wseq: the highest snapshot, dialog and WebMCP list numbers of the tab so far, kept across Tab objects
+ * (a reattach, a new worker) so that a ref, a dialog id or a tool handle is never issued twice: an old one is stale,
+ * never another node, dialog or tool.
  * context: the Chrome profile it is in (its browserContextId), when known.
- * @typedef {{ targetId: string, tab: Tab | null, opener: boolean, alerts: string[], watched: Tab | null, space?: string, seq?: number, dseq?: number, context?: string }} TabEntry
- * @typedef {{ next: number, tabs: { alias: string, targetId: string, opener: boolean, space?: string, seq?: number, dseq?: number, context?: string }[] }} TabState */
+ * @typedef {{ targetId: string, tab: Tab | null, opener: boolean, alerts: string[], watched: Tab | null, space?: string, seq?: number, dseq?: number, wseq?: number, context?: string }} TabEntry
+ * @typedef {{ next: number, tabs: { alias: string, targetId: string, opener: boolean, space?: string, seq?: number, dseq?: number, wseq?: number, context?: string }[] }} TabState */
 const SPACE = /^[\p{L}\p{N}_-]{1,32}$/u;
 /** @typedef {{ stopped: boolean, actionId: string | null, done: number, stepSent?: number }} Ctl what a tool run tells its dialog watch, and is told back;
  * stepSent: the tab's input count when the step in progress began */
@@ -106,7 +108,9 @@ const SPACE = /^[\p{L}\p{N}_-]{1,32}$/u;
 /** Input stays off while the tab is with the user. */
 const HELD = /** @type {const} */ ({ code: 'handed_off', message: 'the tab was handed to the user' });
 
-const TAB_TOOLS = new Set(['navigate', 'snapshot', 'read', 'act', 'screenshot', 'network', 'wait_for', 'fetch', 'files', 'eval']);
+const TAB_TOOLS = new Set(['navigate', 'snapshot', 'read', 'act', 'screenshot', 'network', 'wait_for', 'fetch', 'files', 'eval', 'webmcp']);
+const WEBMCP_STATUS = new Set(['Completed', 'Canceled', 'Error', 'waiting']);
+const APPROVAL_WAIT_MS = 120_000; // how long a call waits for the user's answer in the panel before it answers awaiting_approval
 const EVAL_MAX_SOURCE = 10_000;
 const EVAL_MAX_RESULT = 64 * 1024;
 const FETCH_MAX = 256 * 1024;
@@ -159,6 +163,24 @@ async function pageFetch(url, method, headers, maxBytes, keep) {
     return { status: r.status, headers: picked, bytes: n, id };
   }
   return { status: r.status, headers: picked, bytes: over ? null : n, text: new TextDecoder().decode(buf.subarray(0, Math.min(n, maxBytes))), truncated: over };
+}
+
+/** @typedef {ReturnType<import('./sites.js').SitePolicy['assess']>} Assessment */
+
+/**
+ * Which hidden frames, and why, for a blocked_frame message: their origins (the top document's origin is reported the
+ * same way, as blocked_origin) or that they have none to judge (about:blank, data:, a sandboxed frame).
+ * @param {Assessment} a @param {string[]} [ids] the frames to name (default: every hidden frame)
+ */
+function hiddenWhy(a, ids = [...a.hidden]) {
+  /** @type {Map<string, number>} */ const named = new Map();
+  for (const id of ids) {
+    const f = a.frames.get(id);
+    const k = f?.origin ? `${f.origin} (${f.verdict === 'blocked' ? 'blocked for this client' : 'not known'})` : 'without an origin K-Browser can judge (about:blank, data:, sandboxed, or inside such a frame)';
+    named.set(k, (named.get(k) ?? 0) + 1);
+  }
+  const list = [...named].slice(0, 5).map(([k, n]) => (n > 1 ? `${n} frames ${k}` : k));
+  return `from a site this client may not use: ${list.join('; ')}${named.size > 5 ? `; and ${named.size - 5} more` : ''}`;
 }
 
 /** A piece of a kept body, as base64; the body is dropped after its last piece (or with drop). @param {string} id @param {number} start @param {number} len @param {boolean} drop */
@@ -221,6 +243,12 @@ export class McpSession {
     /** @type {Browser | null} */ this.browser = null;
     /** @type {Map<string, TabEntry>} alias -> tab */ this.tabs = new Map();
     /** @type {Map<string, string>} targetId -> alias */ this.aliases = new Map();
+    /** tabs dropped because their target was found missing, kept briefly: Chrome may be replacing the page, and the
+     * replacement is announced only after its adoption (tabs.get) @type {Map<string, { alias: string, e: TabEntry, at: number }>} */
+    this.dropped = new Map();
+    /** approvals this session asked for, by id: the tab, tool handle and args they were asked for
+     * @type {Map<string, { alias: string, tool: string, args: string }>} */
+    this.approvalsAsked = new Map();
     this.nextAlias = 0;
     /** @type {((state: TabState) => Promise<void>) | null} under the shim: report the tab table before a result shows it */
     this.onTabs = null;
@@ -231,7 +259,7 @@ export class McpSession {
   /** The tab table, as the shim keeps it for the next worker. @returns {TabState} */
   tabState() {
     return { next: this.nextAlias, tabs: [...this.tabs].map(([alias, e]) => ({ alias, targetId: e.targetId, opener: e.opener,
-      ...(e.space ? { space: e.space } : {}), ...(e.seq ? { seq: e.seq } : {}), ...(e.dseq ? { dseq: e.dseq } : {}),
+      ...(e.space ? { space: e.space } : {}), ...(e.seq ? { seq: e.seq } : {}), ...(e.dseq ? { dseq: e.dseq } : {}), ...(e.wseq ? { wseq: e.wseq } : {}),
       ...(e.context ? { context: e.context } : {}) })) };
   }
 
@@ -249,7 +277,7 @@ export class McpSession {
       this.aliases.set(x.targetId, x.alias);
       this.tabs.set(x.alias, { targetId: x.targetId, tab: null, opener: x.opener === true, alerts: [], watched: null,
         ...(typeof x.space === 'string' && SPACE.test(x.space) ? { space: x.space } : {}), ...(Number.isInteger(x.seq) && x.seq > 0 ? { seq: x.seq } : {}),
-        ...(Number.isInteger(x.dseq) && x.dseq > 0 ? { dseq: x.dseq } : {}), ...(typeof x.context === 'string' ? { context: x.context } : {}) });
+        ...(Number.isInteger(x.dseq) && x.dseq > 0 ? { dseq: x.dseq } : {}), ...(Number.isInteger(x.wseq) && x.wseq > 0 ? { wseq: x.wseq } : {}), ...(typeof x.context === 'string' ? { context: x.context } : {}) });
     }
     this.tabsSent = JSON.stringify(this.tabState());
   }
@@ -288,9 +316,41 @@ export class McpSession {
       }
     }
     this.browser = await this.connect(this.endpoint);
+    // Chrome replaced one of our pages with a new one (tabs.onReplaced): it stays the same tab id for the agent
+    this.browser.client.onEvent?.((ev) => {
+      const info = ev.method === 'Target.targetCreated' ? ev.params.targetInfo : null;
+      if (typeof info?.kbReplaces === 'string' && typeof info.targetId === 'string') this.#replaced(info.kbReplaces, info.targetId);
+    });
     // Target.targetCreated for popups (act reports the tabs a step opened)
     await this.browser.client.call('Target.setDiscoverTargets', { discover: true }).catch(() => {});
     return this.browser;
+  }
+
+  /** The tab id of a replaced target now names its replacement (refs of the old page are stale, as after a navigation).
+   * @param {string} oldId @param {string} newId */
+  #replaced(oldId, newId) {
+    const d = this.dropped.get(oldId);
+    this.dropped.delete(oldId);
+    if (d && !this.aliases.has(oldId) && !this.tabs.has(d.alias) && Date.now() - d.at < DROPPED_MS) {
+      // a tabs list (or a use of the tab) ran between the old target going and its replacement arriving
+      this.tabs.set(d.alias, d.e);
+      this.aliases.set(oldId, d.alias);
+    }
+    const alias = this.aliases.get(oldId);
+    const e = alias ? this.tabs.get(alias) : undefined;
+    if (!alias || !e || this.aliases.has(newId)) return;
+    this.aliases.delete(oldId);
+    this.aliases.set(newId, alias);
+    e.targetId = newId; // the shim hears of it with the next result (call() reports the tab table)
+  }
+
+  /** Forget a tab whose target was found missing (kept briefly in case Chrome is replacing it). @param {string} alias @param {TabEntry} e */
+  #drop(alias, e) {
+    this.tabs.delete(alias);
+    this.aliases.delete(e.targetId);
+    const now = Date.now();
+    for (const [id, x] of this.dropped) if (now - x.at >= DROPPED_MS) this.dropped.delete(id);
+    this.dropped.set(e.targetId, { alias, e, at: now });
   }
 
   /** @param {string} targetId @param {boolean} opener */
@@ -311,12 +371,11 @@ export class McpSession {
     const b = await this.#browser();
     if (e.tab && !e.tab.gone && e.tab.client === b.client) return { alias: /** @type {string} */ (alias), e, t: e.tab };
     try {
-      this.#watch(e, await Tab.attach(b.client, e.targetId, { snapshotSeq: e.seq ?? 0, dialogSeq: e.dseq ?? 0 }));
+      this.#watch(e, await Tab.attach(b.client, e.targetId, { snapshotSeq: e.seq ?? 0, dialogSeq: e.dseq ?? 0, webmcpSeq: e.wseq ?? 0 }));
     } catch (err) {
       if (err instanceof SdkError && err.code === 'disconnected') throw err;
-      this.tabs.delete(/** @type {string} */ (alias));
-      this.aliases.delete(e.targetId);
-      throw new ToolError('unknown_tab', `tab ${alias} is gone`);
+      this.#drop(/** @type {string} */ (alias), e);
+      throw new ToolError('unknown_tab', `tab ${alias} is gone${e.tab?.gone ? `: ${e.tab.gone}` : ''}`);
     }
     return { alias: /** @type {string} */ (alias), e, t: /** @type {Tab} */ (e.tab) };
   }
@@ -329,6 +388,7 @@ export class McpSession {
     // Tab.attach was given the numbers this tab already used (#tab), before it heard any event: kept as a second guard
     if ((e.seq ?? 0) > t.snapshotSeq) t.snapshotSeq = /** @type {number} */ (e.seq);
     if ((e.dseq ?? 0) > t.dialogSeq) t.dialogSeq = /** @type {number} */ (e.dseq);
+    if ((e.wseq ?? 0) > t.webmcpSeq) t.webmcpSeq = /** @type {number} */ (e.wseq);
     t.onDialog((d) => {
       if (d.type !== 'alert') return;
       e.alerts.push(this.#dialogShown(e, t, d) ? d.message : '(an alert from a site this client may not use)');
@@ -405,10 +465,10 @@ export class McpSession {
     return a;
   }
 
-  /** @param {Tab} t @param {string} ref @param {{ hidden: Set<string> }} a */
+  /** @param {Tab} t @param {string} ref @param {Assessment} a */
   #refAllowed(t, ref, a) {
     const entry = t.entry(String(ref));
-    if (a.hidden.has(entry.stamp.frameId)) throw new ToolError('blocked_frame', `ref ${ref} is in a frame from a site this client may not use`);
+    if (a.hidden.has(entry.stamp.frameId)) throw new ToolError('blocked_frame', `ref ${ref} is in a frame ${hiddenWhy(a, [entry.stamp.frameId])}`);
     return entry;
   }
 
@@ -452,6 +512,7 @@ export class McpSession {
     for (const e of this.tabs.values()) {
       if (e.tab && e.tab.snapshotSeq > (e.seq ?? 0)) e.seq = e.tab.snapshotSeq;
       if (e.tab && e.tab.dialogSeq > (e.dseq ?? 0)) e.dseq = e.tab.dialogSeq;
+      if (e.tab && e.tab.webmcpSeq > (e.wseq ?? 0)) e.wseq = e.tab.webmcpSeq;
     }
     if (!this.onTabs) return;
     const state = this.tabState();
@@ -490,6 +551,7 @@ export class McpSession {
         case 'fetch': return this.#fetch(a);
         case 'files': return this.#files(a);
         case 'eval': return this.#eval(a);
+        case 'webmcp': return this.#webmcp(a);
         default: return this.#waitFor(a);
       }
     });
@@ -684,7 +746,7 @@ export class McpSession {
             page[alias] = { url: ti.url ?? '', title: ti.title ?? '' };
           }
         }
-        for (const [alias, e] of this.tabs) if (!targetInfos.some((/** @type {any} */ x) => x.targetId === e.targetId)) { this.tabs.delete(alias); this.aliases.delete(e.targetId); }
+        for (const [alias, e] of this.tabs) if (!targetInfos.some((/** @type {any} */ x) => x.targetId === e.targetId)) this.#drop(alias, e);
         return { head: { tabs: head }, ...(Object.keys(page).length ? { page } : {}) };
       }
       case 'open': {
@@ -811,7 +873,8 @@ export class McpSession {
   async #snapshot(a) {
     const { alias, e, t } = await this.#tab(a.tab);
     const before = await this.#guard(e, t);
-    const snap = await t.snapshot({ full: a.full === true, hide: before.hidden });
+    if (a.within !== undefined && (typeof a.within !== 'string' || !a.within.trim())) throw new ToolError('bad_argument', 'within: a CSS selector');
+    const snap = await t.snapshot({ full: a.full === true, hide: before.hidden, ...(a.within !== undefined ? { within: a.within } : {}) });
     await this.#guard(e, t);
     return { head: { tab: alias, refs: snap.refs.length, truncated: snap.truncated, hiddenFrames: before.hidden.size },
       page: [snap.text, ...snap.notes.map((n) => `(${n})`)].join('\n') };
@@ -951,6 +1014,109 @@ export class McpSession {
     return { head: { tab: alias, actionId }, page: value === undefined ? null : value };
   }
 
+  /**
+   * webmcp: the tools the page registers (document.modelContext), listed and called through Chrome (src/sdk/webmcp.js).
+   * Everything about a tool and its result is page content. Tools of hidden frames are not listed or called.
+   * @param {Record<string, any>} a @returns {Promise<Out>}
+   */
+  async #webmcp(a) {
+    const { alias, e, t } = await this.#tab(a.tab);
+    const before = await this.#guard(e, t);
+    const w = t.webmcp();
+    const timeoutMs = clamp(a.timeoutMs, 0, 600_000, 30_000);
+    /** @param {Record<string, any>} r @param {string} [actionId] @returns {Promise<Out>} */
+    const result = async (r, actionId) => {
+      const after = await this.#assess(e, t);
+      if (after.main.verdict !== 'allowed') throw new Blocked(after.main.origin);
+      const status = WEBMCP_STATUS.has(r.status) ? r.status : 'Error';
+      /** @type {Record<string, any>} */ const head = { tab: alias, ...(actionId ? { actionId } : {}), invocationId: String(r.invocationId), status };
+      if (status === 'waiting') {
+        head.note = 'the page has not answered yet (it may be waiting for the user, e.g. an approval on the page): '
+          + 'collect it with webmcp {action:"wait", invocationId}; do not call the tool again';
+        return { head };
+      }
+      const page = { tool: r.tool, ...(r.output !== undefined ? { output: r.output } : {}), ...(r.errorText ? { errorText: r.errorText } : {}), ...(r.exception ? { exception: r.exception } : {}) };
+      if (Buffer.byteLength(JSON.stringify(page), 'utf8') > EVAL_MAX_RESULT) return { head: { ...head, error: 'too_big', max: EVAL_MAX_RESULT }, isError: true };
+      return { head, page, isError: status !== 'Completed' };
+    };
+    switch (a.action) {
+      case 'list': {
+        const tools = await w.list({ skip: before.hidden });
+        await this.#guard(e, t);
+        const main = t.tree.mainFrameId;
+        return { head: { tab: alias, tools: tools.map((x) => x.handle),
+          ...(tools.length ? {} : { note: 'no tools: the page registers none, or WebMCP is off in this Chrome (chrome://flags, WebMCP)' }) },
+        ...(tools.length ? { page: tools.map((x) => ({ tool: x.handle, name: x.name, description: x.description, inputSchema: x.inputSchema ?? null,
+          ...(x.annotations ? { annotations: x.annotations } : {}), frame: x.frameId === main ? 'top' : 'child' })) } : {}) };
+      }
+      case 'call': {
+        if (typeof a.tool !== 'string') throw new ToolError('bad_argument', 'call needs tool (a handle from webmcp {action:"list"}, e.g. w1.2)');
+        const args = a.args ?? {};
+        if (!args || typeof args !== 'object' || Array.isArray(args)) throw new ToolError('bad_argument', 'args: an object matching the tool\'s inputSchema');
+        const h = w.entry(a.tool);
+        if (before.hidden.has(h.stamp.frameId)) throw new ToolError('blocked_frame', `tool ${a.tool} is in a frame ${hiddenWhy(before, [h.stamp.frameId])}`);
+        /** @type {string | undefined} */ let approvalId;
+        if (w.tool(a.tool).annotations?.consequential === true) {
+          // the site marks it consequential (a payment, a submission): the user allows it in the K-Browser panel first
+          // the bridge enforces it for every client. An unmarked tool is not asked about
+          const asked = await this.#approval(alias, t, h, a, args);
+          if (typeof asked !== 'string') return asked;
+          approvalId = asked;
+          const now = await this.#guard(e, t); // the page may have changed while the user decided
+          if (now.hidden.has(h.stamp.frameId)) throw new ToolError('blocked_frame', `tool ${a.tool} is in a frame ${hiddenWhy(now, [h.stamp.frameId])}`);
+        }
+        const { actionId } = await t.mark('webmcp');
+        return result(await w.call(a.tool, args, { timeoutMs, ...(approvalId ? { approvalId } : {}) }), actionId);
+      }
+      case 'wait':
+        if (typeof a.invocationId !== 'string') throw new ToolError('bad_argument', 'wait needs invocationId (from a call that answered status "waiting")');
+        return result(await w.wait(a.invocationId, { timeoutMs }));
+      default: throw new ToolError('bad_argument', 'action must be list, call or wait');
+    }
+  }
+
+  /**
+   * Ask the user in the K-Browser panel to allow one call of a consequential tool, or pick up an earlier request
+   * (approvalId: same tab, tool and args). The approval id once allowed (the bridge uses it up with the call); else
+   * the result to answer.
+   * @param {string} alias @param {Tab} t @param {import('../sdk/webmcp.js').ToolHandle} h @param {Record<string, any>} a @param {Record<string, any>} args
+   * @returns {Promise<Out | string>}
+   */
+  async #approval(alias, t, h, a, args) {
+    const argsJson = JSON.stringify(args);
+    let id = a.approvalId;
+    if (id !== undefined) {
+      const mine = this.approvalsAsked.get(String(id));
+      if (!mine || mine.alias !== alias || mine.tool !== a.tool || mine.args !== argsJson) {
+        throw new ToolError('bad_argument', 'approvalId: from an earlier call of this same tab, tool and args (anything else needs a new request)');
+      }
+    } else {
+      // the bridge writes what the panel shows from these, and binds the approval to them
+      const r = await t.client.call('KBrowser.requestApproval', { targetId: t.targetId, frameId: h.stamp.frameId, toolName: h.name, input: args });
+      id = String(r.approvalId);
+      this.approvalsAsked.set(id, { alias, tool: String(a.tool), args: argsJson });
+      if (this.approvalsAsked.size > 50) this.approvalsAsked.delete(/** @type {string} */ (this.approvalsAsked.keys().next().value));
+    }
+    const end = Date.now() + clamp(a.timeoutMs, 0, 600_000, APPROVAL_WAIT_MS);
+    for (;;) {
+      const s = await t.client.call('KBrowser.approvalStatus', { approvalId: id });
+      if (s.state === 'allowed') {
+        this.approvalsAsked.delete(id);
+        return String(id);
+      }
+      if (s.state !== 'waiting') {
+        this.approvalsAsked.delete(id);
+        const why = s.state === 'denied' ? 'the user denied it in the K-Browser panel' : `the request ${s.state === 'used' ? 'was already used' : `is ${s.state}`}${s.why ? ` (${s.why})` : ''}`;
+        return { head: { tab: alias, approvalId: id, error: s.state === 'denied' ? 'denied' : 'approval_ended', message: `${why}; nothing was called` }, isError: true };
+      }
+      if (Date.now() >= end) break;
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    return { head: { tab: alias, approvalId: id, status: 'awaiting_approval',
+      note: 'the site marks this tool consequential: the user must press 允許 (Allow) in the K-Browser side panel in Chrome first. '
+        + 'Tell them, then call again with the same tool, args and this approvalId. Nothing was called' } };
+  }
+
   /** read {selector, fields}: rows of the main frame, as page content. @param {Record<string, any>} a @returns {Promise<Out>} */
   async #query(a) {
     if (typeof a.selector !== 'string' || !a.selector.trim() || a.selector.length > 1000) throw new ToolError('bad_argument', 'selector: a CSS selector (up to 1000 characters)');
@@ -978,7 +1144,8 @@ export class McpSession {
     ctl.actionId = actionId;
     /** @type {string[]} tabs a step opened (popups) */ const opened = [];
     const offPopups = t.client.onEvent((ev) => {
-      if (ev.method === 'Target.targetCreated' && ev.params.targetInfo?.openerId === t.targetId) opened.push(ev.params.targetInfo.targetId);
+      const info = ev.method === 'Target.targetCreated' ? ev.params.targetInfo : null;
+      if (info?.openerId === t.targetId && !info.kbReplaces) opened.push(info.targetId); // a replacement is this tab, not a popup
     });
     try {
       return await this.#steps(e, t, alias, steps, actionId, ctl, opened);
@@ -1003,7 +1170,7 @@ export class McpSession {
           this.#refAllowed(t, s.ref, now);
         } else if (!now.clean) {
           // a key goes wherever the focus is, a wheel wherever the pointer is: maybe into a hidden frame
-          throw new ToolError('blocked_frame', `${s.do} without a ref is refused while the tab has frames from sites this client may not use`);
+          throw new ToolError('blocked_frame', `${s.do} without a ref is refused while the tab has frames from sites this client may not use: ${hiddenWhy(now)}`);
         }
         switch (s.do) {
           case 'click': done.push(await t.click(s.ref)); break;
@@ -1024,10 +1191,19 @@ export class McpSession {
       }
     }
     if (done.length) await new Promise((r) => setTimeout(r, POPUP_GRACE_MS));
-    const after = await this.#assess(e, t);
+    // the page went away under the step (Chrome replaced it, the debugger was detached): say why, not "unknown origin";
+    // a replacement is adopted a moment later, and keeps this tab id
+    for (let i = 0; t.gone && e.targetId === t.targetId && /replaced/.test(t.gone) && i < 15; i++) await new Promise((r) => setTimeout(r, 100));
     const tabs = [...new Set(opened)].map((id) => this.#alias(id, true));
     /** @type {Record<string, any>} */
     const head = { tab: alias, actionId, done: done.length, of: steps.length, ...(failed ? { error: failed.error, step: failed.step } : {}), ...(tabs.length ? { opened: tabs } : {}) };
+    if (t.gone) {
+      const kept = e.targetId !== t.targetId;
+      return { head: { ...head, status: kept ? 'tab_replaced' : 'tab_gone',
+        note: kept ? `${t.gone}; it is still tab ${alias}: take a new snapshot` : `${t.gone}; the tab cannot be used any more` },
+      page: { steps: done.map(stepView), ...(failed ? { failed } : {}) }, isError: true };
+    }
+    const after = await this.#assess(e, t);
     // the tab left the allowed sites: report only that
     if (after.main.verdict !== 'allowed') return { head: { ...head, status: 'blocked_origin', origin: after.main.origin ?? 'unknown' }, isError: true };
     return { head, page: { steps: done.map(stepView), ...(failed ? { failed } : {}) }, isError: failed !== null };
@@ -1038,7 +1214,7 @@ export class McpSession {
     if (!this.screenshots) throw new ToolError('disabled', 'screenshots are turned off for this client');
     const { alias, e, t } = await this.#tab(a.tab);
     const before = await this.#guard(e, t);
-    if (!before.clean) throw new ToolError('blocked_frame', 'refused: the tab shows a frame from a blocked or unknown site, which the image would include');
+    if (!before.clean) throw new ToolError('blocked_frame', `refused: the tab shows a frame the image would include, ${hiddenWhy(before)}`);
     const print = fingerprint(t);
     /** @type {Record<string, any>} */ const params = { format: 'png' };
     if (a.ref !== undefined) {
@@ -1123,7 +1299,8 @@ export class McpSession {
   }
 }
 
-/** What a step delivered, without the text that was typed (it may be a secret). @param {Record<string, any>} s */
+/** What a step delivered, without the text that was typed (it may be a secret). fieldValue stays: the SDK reads it back
+ * only from date, month, number and email fields, never a password field. @param {Record<string, any>} s */
 function stepView(s) {
   const { text, value, ...rest } = s;
   return rest;

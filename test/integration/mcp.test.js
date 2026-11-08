@@ -124,7 +124,7 @@ after(async () => {
 
 test('initialize and tools/list: the tools within 12 KB; the token is not in the MCP configuration', { skip }, async () => {
   const { tools } = await m.client.listTools();
-  assert.deepEqual(tools.map((t) => t.name), ['tabs', 'navigate', 'snapshot', 'read', 'act', 'screenshot', 'network', 'wait_for', 'needs_human', 'status', 'learnings', 'fetch', 'files']);
+  assert.deepEqual(tools.map((t) => t.name), ['tabs', 'navigate', 'snapshot', 'read', 'act', 'screenshot', 'network', 'wait_for', 'needs_human', 'status', 'learnings', 'fetch', 'files', 'webmcp']);
   assert.ok(Buffer.byteLength(JSON.stringify({ tools }), 'utf8') <= 12 * 1024);
   assert.match(String(m.client.getInstructions()), /untrusted-page-content/);
 });
@@ -281,6 +281,7 @@ test('site policy: a blocked iframe in an allowed page is hidden, input to it re
   assert.match((await m.call('read', { tab })).page ?? '', /top button/);
   const shot = await m.call('screenshot', { tab });
   assert.deepEqual([shot.isError, shot.head.error, shot.raw.content.length], [true, 'blocked_frame', 1]);
+  assert.match(String(shot.head.message), /http:\/\/localhost:\d+ \(blocked for this client\)/, 'which frame (field report 2026-11-09 #7)');
   const net = await m.call('network', { tab, since: frameNav.head.actionId });
   assert.ok(net.head.hiddenByPolicy >= 1 && !net.text.includes('localhost:') && !net.text.includes('/child'), net.text);
   assert.match(net.page ?? '', /\/frame/);

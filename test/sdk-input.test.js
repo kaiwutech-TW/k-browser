@@ -60,7 +60,8 @@ function actWire({ nodes = { 7: { box: [100, 100, 80, 30], role: 'button', name:
     const f = String(p.functionDeclaration);
     const value = f.includes('kbConnected') ? page.connected : f.includes('kbWithin') ? page.within : f.includes('kbContextHas') ? page.context
       : f.includes('kbTransformProblems') ? page.transform : f.includes('kbFocused') ? page.focused
-        : f.includes('kbAllSelected') ? page.allSelected : f.includes('kbReadOnly') ? page.readOnly : f.includes('kbIsMac') ? page.mac : true;
+        : f.includes('kbAllSelected') ? page.allSelected : f.includes('kbReadOnly') ? page.readOnly : f.includes('kbIsMac') ? page.mac
+          : f.includes('kbDateKind') ? null : f.includes('kbNoSelection') ? false : true;
     return { result: { value } };
   });
   w.on('Runtime.evaluate', (p) => ({ result: { value: String(p.expression).includes('kbViewport') ? page.viewport : 'ran' } }));
@@ -362,7 +363,7 @@ test('type: nothing is typed when the click did not give the field the keyboard 
 test('select: never sets the value from script; an option the keyboard cannot reach on macOS is `unsupported`', async () => {
   const { w } = actWire({ nodes: { 7: { box: [100, 100, 120, 24], role: 'combobox', name: 'go' } } });
   const tab = await ready(w);
-  const options = [{ value: 'a', label: 'Apple', disabled: false }, { value: 't', label: '台北', disabled: false }];
+  const options = [{ value: 'a', label: 'Apple', disabled: false }, { value: 't', label: '台北', disabled: false }, { value: 's', label: ' spaced', disabled: false }];
   w.on('Runtime.callFunctionOn', (p) => {
     const f = String(p.functionDeclaration);
     if (f.includes('kbSelectState')) return { result: { value: { multiple: false, selectedIndex: 0, value: 'a', options } } };
@@ -370,7 +371,17 @@ test('select: never sets the value from script; an option the keyboard cannot re
     return { result: { value: true } };
   });
   const ref = refOf(tab, await tab.snapshot(), 'go');
-  await rejectsWith(() => tab.select(ref, { label: '台北' }, { fast: true }), 'unsupported');
+  // a Chinese label goes in as key presses carrying its characters (never insertText); this fake never moves the
+  // selection, so it ends as maybe done (the keys went in), with no arrow keys on macOS
+  tab.input.sleep = async () => {};
+  await rejectsWith(() => tab.select(ref, { label: '台北' }, { fast: true }), 'result_unknown');
+  const downs = w.sent.filter((m) => m.method === 'Input.dispatchKeyEvent' && m.params.type === 'keyDown').map((m) => [m.params.key, m.params.text, m.params.code]);
+  assert.deepEqual(downs.slice(0, 2), [['台', '台', ''], ['北', '北', '']]);
+  assert.equal(w.count('Input.insertText'), 0);
+  // a label no key can type first (leading white space would be Space, which opens the menu): nothing sent
+  const before = w.count('Input.dispatchKeyEvent');
+  await rejectsWith(() => tab.select(ref, { label: ' spaced' }, { fast: true }), 'unsupported');
+  assert.equal(w.count('Input.dispatchKeyEvent'), before);
   assert.equal(w.sent.filter((m) => m.params.code === 'ArrowDown' || m.params.code === 'ArrowUp').length, 0, 'no arrow keys on macOS');
   for (const m of w.sent) {
     assert.ok(!/\.value\s*=|selectedIndex\s*=|dispatchEvent/.test(String(m.params.functionDeclaration ?? m.params.expression ?? '')), `no script sets the value: ${m.method}`);

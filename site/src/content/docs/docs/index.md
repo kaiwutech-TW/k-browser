@@ -37,4 +37,4 @@ An agent only sees and controls **the tabs it opened itself**. Your other tabs a
 
 - [Install](/docs/install/) — about ten minutes.
 - [Safety model](/docs/safety/) — what keeps you in control.
-- [Agent tools](/docs/tools/) — the 15 tools an agent gets.
+- [Agent tools](/docs/tools/) — the 16 tools an agent gets.

@@ -17,7 +17,7 @@ const decisionsBoxEl = /** @type {HTMLElement} */ (document.getElementById('deci
 const decisionsEl = /** @type {HTMLElement} */ (document.getElementById('decisions'));
 
 /** about / configured: versions and the clients set up on this machine, idle or not; bridges older than 0.2 send neither
- * @type {{ clients: any[], tabs: any[], handoffs: any[], about?: any, configured?: any[] }} */
+ * @type {{ clients: any[], tabs: any[], handoffs: any[], approvals?: any[], about?: any, configured?: any[] }} */
 let state = { clients: [], tabs: [], handoffs: [] };
 /** @type {Map<string, Map<number, any>>} principal -> entry id -> entry */
 const entries = new Map();
@@ -103,6 +103,20 @@ function render() {
         hb.append(el('div', msg('panelReturnElsewhere', clip(h.profile ?? '?', 32)), 'muted'));
       }
       box.append(hb);
+    }
+
+    // a consequential WebMCP tool waits for the user (src/approvals.js): K-Browser's own text, shown as plain text
+    for (const a of (state.approvals ?? []).filter((x) => x.principal === c.principal)) {
+      const ab = el('div', undefined, 'handoff');
+      ab.append(el('div', msg('approvalWaiting', clip(a.title, MAX.reason))), el('span', msg('tagClient'), 'tag'));
+      if (a.detail) ab.append(el('pre', clip(a.detail, 2000), 'detail'));
+      ab.append(el('div', `${msg('handoffSince', ago(a.since))}${where(a)}`, 'muted'));
+      const allow = el('button', msg('btnAllow'), 'primary small');
+      allow.addEventListener('click', () => send({ op: 'approve', principal: c.principal, approvalId: a.approvalId, allow: true }));
+      const deny = el('button', msg('btnDeny'), 'small');
+      deny.addEventListener('click', () => send({ op: 'approve', principal: c.principal, approvalId: a.approvalId, allow: false }));
+      ab.append(allow, deny);
+      box.append(ab);
     }
 
     const tabs = state.tabs.filter((t) => t.principal === c.principal);

@@ -31,6 +31,12 @@ const bringToFront = () => 'Page.bringToFront is refused: K-Browser never brings
 /** @type {Check} */
 const autoAttach = (p) => (p.flatten === true ? null : 'Target.setAutoAttach is supported only with flatten: true');
 
+/** @type {Check} */
+// a tool the page itself registered (document.modelContext), in one of the tab's frames: no more power than
+// Runtime.evaluate in that frame, which is allowed too
+const invokeTool = (p) => (typeof p.frameId === 'string' && typeof p.toolName === 'string' && p.input && typeof p.input === 'object' && !Array.isArray(p.input)
+  ? null : 'WebMCP.invokeTool needs frameId, toolName (strings) and input (an object)');
+
 /** @type {Map<string, Check>} */
 export const ALLOWED = new Map(Object.entries({
   // --- used by Kav (kfw/*.py) ---
@@ -87,6 +93,10 @@ export const ALLOWED = new Map(Object.entries({
   'Network.getResponseBody': null,
   'Network.getRequestPostData': null,
   'Target.setAutoAttach': autoAttach,
+  // --- WebMCP: the page's own tools (src/sdk/webmcp.js); cancelInvocation is not needed yet ---
+  'WebMCP.enable': null,
+  'WebMCP.disable': null,
+  'WebMCP.invokeTool': invokeTool,
 }));
 
 // Not allowed, recorded so a reviewer does not add them back by accident:

@@ -125,6 +125,35 @@ test('a title and a hand-off reason carrying credentials and a session value: th
   }
 });
 
+test('an approval (a consequential WebMCP tool): the panel shows K-Browser\'s text as text, 允許 allows it, 拒絕 denies another', { skip }, async () => {
+  const token = auth.addClient('approver');
+  const kav = await new FakeCdp(bridge.base, token).connect();
+  const panel = await chrome.extensionPage('panel.html');
+  try {
+    const { targetId } = await kav.call('Target.createTarget', { url: `${base}/victim`, background: true });
+    // what the bridge writes (src/relay.js KBrowser.requestApproval needs a tool Chrome reported: this page has none,
+    // so the approvals are made in the bridge directly; test/integration/webmcp.test.js covers the request itself)
+    const principal = /** @type {any} */ (auth.clientRecord('approver')).principal;
+    const target = { targetId, tabId: /** @type {any} */ (bridge.relay.targets.get(targetId)).tabId };
+    const one = bridge.relay.approvals.request(principal, target, 'pay_invoice @ https://erp.test', '{\n "amount": 70, "note": "<b>x</b>"\n}', 'B1');
+    assert.ok(await eventually(async () => (await panelText(panel)).includes('pay_invoice @ https://erp.test'), 8000), await panelText(panel));
+    assert.equal(await panel.eval('document.querySelectorAll(".handoff pre.detail b").length'), 0, 'the detail is text, not markup');
+    assert.match(await panelText(panel), /"note": "<b>x<\/b>"/);
+    const press = (/** @type {string} */ label) => panel.eval(`(() => { const box = [...document.querySelectorAll('.client')].find((b) => b.querySelector('strong')?.textContent === 'approver');
+      const btn = [...box.querySelectorAll('button')].find((b) => b.textContent === ${JSON.stringify(label)}); btn.click(); return true; })()`);
+    await press(M('btnAllow'));
+    assert.ok(await eventually(async () => (await kav.call('KBrowser.approvalStatus', { approvalId: one.approvalId })).state === 'allowed', 5000));
+    const two = bridge.relay.approvals.request(principal, target, 'submit_draft @ https://erp.test', '{}', 'B2');
+    assert.ok(await eventually(async () => (await panelText(panel)).includes('submit_draft'), 8000));
+    await press(M('btnDeny'));
+    assert.ok(await eventually(async () => (await kav.call('KBrowser.approvalStatus', { approvalId: two.approvalId })).state === 'denied', 5000));
+    assert.ok(await eventually(async () => !(await panelText(panel)).includes('submit_draft'), 5000), 'gone from the panel once answered');
+  } finally {
+    await panel.close();
+    await kav.close();
+  }
+});
+
 test('revoke from the panel (two clicks): that program is disconnected at once and its token stops working', { skip }, async () => {
   const token = auth.addClient('victim');
   const victim = await new FakeCdp(bridge.base, token).connect();

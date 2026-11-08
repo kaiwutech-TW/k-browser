@@ -17,6 +17,7 @@ import { waitFor } from './evidence.js';
 import { FrameTree } from './frames.js';
 import { Input } from './input.js';
 import { takeSnapshot } from './snapshot.js';
+import { WebMcp } from './webmcp.js';
 import { Worlds } from './world.js';
 
 export { SdkError } from './cdp.js';
@@ -57,7 +58,7 @@ export class Tab {
   /**
    * from: the snapshot and dialog numbers this tab already used (a Tab object attached before it): new refs and dialog
    * ids start above them, set before any event is heard, so an old one never names a new node or dialog.
-   * @param {CdpClient} client @param {string} targetId @param {{ snapshotSeq?: number, dialogSeq?: number }} [from]
+   * @param {CdpClient} client @param {string} targetId @param {{ snapshotSeq?: number, dialogSeq?: number, webmcpSeq?: number }} [from]
    */
   static async attach(client, targetId, from = {}) {
     const { sessionId } = await client.call('Target.attachToTarget', { targetId, flatten: true });
@@ -67,7 +68,7 @@ export class Tab {
   }
 
   /** @param {CdpClient} client @param {string} targetId @param {string} sessionId
-   * @param {{ snapshotSeq?: number, dialogSeq?: number }} [from] */
+   * @param {{ snapshotSeq?: number, dialogSeq?: number, webmcpSeq?: number }} [from] */
   constructor(client, targetId, sessionId, from = {}) {
     this.client = client;
     this.targetId = targetId;
@@ -80,6 +81,10 @@ export class Tab {
     /** @type {Set<Promise<void>>} child sessions being set up */
     this.setups = new Set();
     this.snapshotSeq = from.snapshotSeq ?? 0;
+    /** @type {WebMcp | null} */
+    this.webMcp = null;
+    /** the highest WebMCP list number so far (w<n>.<m> handles), carried over like snapshotSeq */
+    this.webmcpSeq = from.webmcpSeq ?? 0;
     /** @type {Map<string, import('./snapshot.js').RefEntry>} */
     this.refs = new Map();
     /** the JavaScript dialog open now, from any of the tab's sessions @type {Dialog | null} */
@@ -95,8 +100,8 @@ export class Tab {
   /** @param {import('./cdp.js').CdpEvent} ev */
   #onEvent(ev) {
     if (ev.sessionId === null) {
-      if (ev.method === 'Target.detachedFromTarget' && ev.params.sessionId === this.sessionId) this.gone ??= 'the tab was detached';
-      else if (ev.method === 'Target.targetDestroyed' && ev.params.targetId === this.targetId) this.gone ??= 'the tab was closed';
+      if (ev.method === 'Target.detachedFromTarget' && ev.params.sessionId === this.sessionId) this.gone ??= goneWhy(ev.params.kbReason);
+      else if (ev.method === 'Target.targetDestroyed' && ev.params.targetId === this.targetId) this.gone ??= goneWhy(ev.params.kbReason ?? 'closed');
       else if (ev.method !== 'Target.detachedFromTarget') return;
     } else if (!this.tree.knows(ev.sessionId)) {
       return;
@@ -256,12 +261,22 @@ export class Tab {
   }
 
   /** The accessibility snapshot of every frame, with refs for interactive nodes (or every node with full: true).
-   * `hide`: frames (ids) to leave out entirely. @param {{ full?: boolean, maxLines?: number, maxBytes?: number, hide?: Set<string> }} [o] */
+   * `hide`: frames (ids) to leave out entirely. `within`: a CSS selector; only the subtree of the first element of the
+   * top document it matches (bad_argument when none does).
+   * @param {{ full?: boolean, maxLines?: number, maxBytes?: number, hide?: Set<string>, within?: string }} [o] */
   async snapshot(o = {}) {
     this.#alive();
     await this.settled();
+    const { within: selector, ...rest } = o;
+    /** @type {{ frameId: string, backendNodeId: number } | undefined} */ let within;
+    if (selector !== undefined) {
+      const frameId = this.#main();
+      const backendNodeId = await this.worlds.nodeFor(frameId, selector);
+      if (backendNodeId === null) throw new SdkError('bad_argument', `nothing in the page matches ${JSON.stringify(selector.slice(0, 200))}`);
+      within = { frameId, backendNodeId };
+    }
     const seq = ++this.snapshotSeq;
-    const snap = await takeSnapshot(this, { ...o, seq });
+    const snap = await takeSnapshot(this, { ...rest, seq, ...(within ? { within } : {}) });
     for (const r of snap.refs) this.refs.set(r.ref, r);
     const oldest = seq - KEEP_SNAPSHOTS;
     for (const key of [...this.refs.keys()]) if (Number(key.slice(1, key.indexOf('.'))) <= oldest) this.refs.delete(key);
@@ -449,9 +464,29 @@ export class Tab {
     return this.tree.mainFrameId;
   }
 
+  /** The page's WebMCP tools (webmcp.js), set up on first use. */
+  webmcp() {
+    this.#alive();
+    this.webMcp ??= new WebMcp(this);
+    return this.webMcp;
+  }
+
   async close() {
     this.unsubscribe();
+    this.webMcp?.close();
     if (!this.gone) await this.client.call('Target.closeTarget', { targetId: this.targetId }).catch(() => {});
     this.gone ??= 'the tab was closed';
+  }
+}
+
+/** Why a tab is gone, from K-Browser's kbReason (on Target.detachedFromTarget / targetDestroyed). @param {unknown} reason */
+function goneWhy(reason) {
+  switch (reason) {
+    case 'closed': return 'the tab was closed';
+    case 'replaced': case 'target_replaced':
+      return 'Chrome replaced the page with a new one (a prerendered page shown, or a discarded tab restored)';
+    case 'canceled_by_user': return 'the debugger was detached by the user (the "started debugging" bar was dismissed)';
+    case 'target_closed': return 'the debugger was detached because Chrome closed or swapped the page';
+    default: return typeof reason === 'string' && reason ? `the tab was detached (${reason})` : 'the tab was detached';
   }
 }

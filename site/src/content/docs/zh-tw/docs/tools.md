@@ -14,6 +14,7 @@ description: agent 透過 K-Browser 的 MCP server 拿到的工具。
 | `network` | 分頁裡的請求，可以要回應內容。秘密會遮掉，不給 header。 |
 | `fetch` | 用分頁的 cookie,對分頁自己的網域做 GET 或 HEAD。跨網域和轉址會被拒絕。 |
 | `files` | agent 自己的檔案區：下載進來(最多 25 MB)、從這裡上傳到檔案欄位。 |
+| `webmcp` | 網站自己提供的工具(WebMCP,`document.modelContext`):列出(附參數格式)、呼叫，或等待頁面要你簽核的呼叫。網站標為「有後果」(付款、送出)的工具，要你先在 K-Browser 側欄按**允許**,所有程式都一樣擋。需要在 `chrome://flags` 開啟 WebMCP。 |
 | `screenshot` | 可見頁面或某個元素的 PNG。不會存檔，可以對個別 client 關掉。 |
 | `needs_human` | 把分頁交給你(登入、驗證碼、決定)並等你交還。 |
 | `learnings` | 存在本機的網站筆記:API、障礙、陷阱、技巧。筆記只是資訊，不是指令。 |

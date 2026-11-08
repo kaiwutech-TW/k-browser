@@ -56,13 +56,13 @@ class Control {
 }
 
 /**
- * @param {{ chrome: string, profile?: string, headless?: boolean }} o  pass profile to relaunch on an existing one (a Chrome restart);
- *   KBROWSER_TEST_HEADED=1 runs the suites in a headed window
+ * @param {{ chrome: string, profile?: string, headless?: boolean, features?: string[] }} o  pass profile to relaunch on an existing one (a Chrome restart);
+ *   KBROWSER_TEST_HEADED=1 runs the suites in a headed window; features: --enable-features (WebMCP)
  */
-export async function launchChrome({ chrome, profile = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-cft-')), headless = process.env.KBROWSER_TEST_HEADED !== '1' }) {
+export async function launchChrome({ chrome, profile = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-cft-')), headless = process.env.KBROWSER_TEST_HEADED !== '1', features = [] }) {
   fs.rmSync(path.join(profile, 'DevToolsActivePort'), { force: true });
   const proc = spawn(chrome, [
-    ...(headless ? ['--headless=new'] : []), `--user-data-dir=${profile}`, '--remote-debugging-port=0', '--no-first-run', '--no-default-browser-check',
+    ...(headless ? ['--headless=new'] : []), ...(features.length ? [`--enable-features=${features.join(',')}`] : []), `--user-data-dir=${profile}`, '--remote-debugging-port=0', '--no-first-run', '--no-default-browser-check',
     // never the user's keychain: no "找不到鑰匙圈" prompt on their screen, and the tests cannot wait on one
     '--use-mock-keychain', '--password-store=basic',
     `--load-extension=${EXTENSION_DIR}`, `--disable-extensions-except=${EXTENSION_DIR}`, 'about:blank',
@@ -323,6 +323,66 @@ third</textarea>
           cal.firstChild.addEventListener('change', (e) => { document.body.dataset.year = e.target.value; draw(e.target.value); });
         };
         draw('2024');
+      </script>`,
+    // fields from a 2026-11-09 field report: Chinese <select> labels, date / month fields, a number field,
+    // buttons under a ::after (their own, and their wrapper's)
+    '/act-fields': () => `<!doctype html><meta charset="utf-8"><title>fields</title><style>body{margin:0}
+      #wrap::after, #own::after { content: ""; position: absolute; inset: 0 }</style>${REC}
+      <select aria-label="period" style="position:absolute;left:20px;top:20px">
+        <option value="">請選擇</option><option value="p">依期別</option><option value="m">依年月</option><option value="d">依日期</option></select>
+      <select aria-label="kind" style="position:absolute;left:20px;top:60px">
+        <option value="">請選擇</option><option value="i">資訊服務</option><option value="f">手續費</option><option value="f2">手續費退回</option></select>
+      <input type="date" aria-label="when" value="2026-11-01" style="position:absolute;left:20px;top:110px;width:200px">
+      <input type="month" aria-label="which month" style="position:absolute;left:20px;top:160px;width:200px">
+      <input type="time" aria-label="what time" style="position:absolute;left:20px;top:210px;width:200px">
+      <input type="number" aria-label="amount" value="0" style="position:absolute;left:300px;top:20px;width:120px">
+      <input type="number" aria-label="sticky amount" value="7" onkeydown="if (event.key === 'Backspace') { event.preventDefault() }" style="position:absolute;left:300px;top:60px;width:120px">
+      <input type="number" aria-label="caret amount" value="0" style="position:absolute;left:300px;top:250px;width:120px">
+      <script>
+        // like a controlled input that re-renders on every key and loses the caret: it goes back to the start
+        const ca = document.querySelector('[aria-label="caret amount"]');
+        ca.addEventListener('input', () => { const v = ca.value; ca.type = 'text'; ca.value = v; ca.setSelectionRange(0, 0); ca.type = 'number'; });
+      </script>
+      <button id="own" style="position:absolute;left:300px;top:110px;width:120px;height:36px">own after</button>
+      <div id="wrap" style="position:absolute;left:300px;top:160px;width:120px;height:36px"><button style="width:100%;height:100%">wrapped</button></div>
+      <button style="position:absolute;left:460px;top:300px;width:200px;height:40px">half covered</button>
+      <button style="position:absolute;left:460px;top:360px;width:200px;height:40px">all covered</button>
+      <div style="position:absolute;left:460px;top:300px;width:60px;height:40px;background:#ccc"></div>
+      <div style="position:absolute;left:450px;top:350px;width:230px;height:60px;background:#ccc"></div>
+      <div style="height:2000px"></div>`,
+    // WebMCP: tools in the top page and (same name) in a cross-site child frame; one waits for a click on the page
+    '/webmcp': (other) => `<!doctype html><meta charset="utf-8"><title>webmcp</title>
+      <button id="approve" style="position:absolute;left:20px;top:20px;width:120px;height:30px">approve</button>
+      <button onclick="switchInvoice()" style="position:absolute;left:160px;top:20px;width:120px;height:30px">switch invoice</button>
+      <button onclick="switchPay()" style="position:absolute;left:300px;top:20px;width:120px;height:30px">switch pay</button>
+      <!-- a cross-site frame may register tools only when the page allows it the "tools" feature (permissions policy) -->
+      <iframe src="http://localhost:${other}/webmcp-child" allow="tools" style="position:absolute;left:20px;top:80px" width="300" height="100"></iframe>
+      <script>
+        const mc = document.modelContext || navigator.modelContext;
+        let approve = null;
+        document.getElementById('approve').onclick = () => { if (approve) { approve({ content: [{ type: 'text', text: 'submitted' }] }); approve = null; } };
+        mc.registerTool({ name: 'draft_expense', description: 'Draft an expense', inputSchema: { type: 'object', properties: { amount: { type: 'integer' } }, required: ['amount'] },
+          execute: async (a) => { document.body.dataset.drafted = String(a.amount); return { content: [{ type: 'text', text: 'draft ' + a.amount }] }; } });
+        mc.registerTool({ name: 'submit_expense_draft', description: 'Submit (a person approves on the page)', inputSchema: { type: 'object', properties: {} },
+          execute: () => new Promise((r) => { approve = r; }) });
+        let payCtl = new AbortController();
+        const pay = (who) => mc.registerTool({ name: 'pay_invoice', description: 'Pay ' + who + ' (the site marks it consequential)', inputSchema: { type: 'object', properties: { amount: { type: 'integer' } } },
+          annotations: { consequentialHint: true },
+          execute: async (a) => { document.body.dataset.paid = who + ':' + a.amount; return { content: [{ type: 'text', text: 'paid ' + a.amount }] }; } }, { signal: payCtl.signal });
+        pay(location.host);
+        window.switchPay = () => { payCtl.abort(); payCtl = new AbortController(); pay('B'); };
+        mc.registerTool({ name: 'broken', description: 'Always fails', inputSchema: { type: 'object', properties: {} }, execute: async () => { throw new Error('nope'); } });
+        // review ①: the page removes a tool and registers another one under the same name (AbortController)
+        let invoice = new AbortController();
+        const saveInvoice = (which) => mc.registerTool({ name: 'save_invoice', description: 'save invoice ' + which, inputSchema: { type: 'object', properties: {} },
+          execute: async () => { document.body.dataset.saved = which; return { content: [{ type: 'text', text: 'saved ' + which }] }; } }, { signal: invoice.signal });
+        saveInvoice('A');
+        window.switchInvoice = () => { invoice.abort(); invoice = new AbortController(); saveInvoice('B'); };
+        mc.registerTool({ name: 'same_name', description: 'top', inputSchema: { type: 'object', properties: {} }, execute: async () => ({ content: [{ type: 'text', text: 'from top' }] }) });
+      </script>`,
+    '/webmcp-child': () => `<!doctype html><meta charset="utf-8"><title>child</title><script>
+        (document.modelContext || navigator.modelContext).registerTool({ name: 'same_name', description: 'child', inputSchema: { type: 'object', properties: {} },
+          execute: async () => ({ content: [{ type: 'text', text: 'from child' }] }) });
       </script>`,
     // contenteditable replace: every editor inside one 800x600 screen, so nothing scrolls between actions
     '/act-editors': () => `<!doctype html><meta charset="utf-8"><title>editors</title><style>body{margin:0}</style>

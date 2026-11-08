@@ -37,6 +37,7 @@ import { Handle } from './world.js';
  * @typedef {{ stamp: Stamp, parent: Stamp, owner: number, origin: Point, width: number, height: number }} Boundary */
 /** @typedef {{ quad: number[], local: Point, main: Point, boundaries: Boundary[], viewport: { width: number, height: number } }} Located */
 /** @typedef {{ context?: string, fast?: boolean }} ActOptions */
+/** A node inside a ref's node that is pressed in its place, with its own role and name. @typedef {{ backendNodeId: number, role: string, name: string }} Part */
 /** @typedef {import('./index.js').Tab} Tab */
 
 const PICK_TRIES = 8;
@@ -58,12 +59,14 @@ function kbConnected() {
 
 /**
  * Is `this` (the hit node) the target or inside it in the composed tree? Up through slots (a slotted node's parent
- * there is its slot), shadow roots (to their hosts) and parents. A slot in a closed shadow tree hides itself from
- * `assignedSlot`, so the target's own slots are also asked what they hold.
- * @this {Node} @param {Node} target
+ * there is its slot), shadow roots (to their hosts, user-agent ones too: a date field's year part) and parents.
+ * A slot in a closed shadow tree hides itself from `assignedSlot`, so the target's own slots are also asked what they
+ * hold. A hit on a ::before / ::after counts as a hit on the element that generates it: the browser sends the click
+ * to that element (a CSSPseudoElement, whose `element` it is).
+ * @this {any} @param {Node} target
  */
 function kbWithin(target) {
-  /** @type {any} */ let n = this;
+  /** @type {any} */ let n = this && this.nodeType === undefined && this.element ? this.element : this;
   while (n) {
     if (n === target) return true;
     n = n.assignedSlot || n.parentNode || (n.nodeType === 11 ? n.host : null);
@@ -190,6 +193,36 @@ function kbAllSelected() {
 function kbReadOnly() {
   if (this.localName === 'input' || this.localName === 'textarea') return this.readOnly === true || this.disabled === true;
   return this.hasAttribute('contenteditable') && !this.isContentEditable;
+}
+
+/** @this {any} 'date' / 'month' for the fields whose whole value can be typed, another type for the other date and
+ * time fields, null for anything else */
+function kbDateKind() {
+  if (this.localName !== 'input') return null;
+  const t = String(this.type);
+  return ['date', 'month', 'time', 'datetime-local', 'week'].includes(t) ? t : null;
+}
+
+/** @this {any} */
+function kbValue() {
+  return this.value;
+}
+
+/** @this {any} */
+function kbIsNumber() {
+  return this.localName === 'input' && this.type === 'number';
+}
+
+/** @this {any} An <input> without selection offsets (number, email): select-all cannot be checked by offsets */
+function kbNoSelection() {
+  return this.localName === 'input' && this.selectionStart === null;
+}
+
+/** @this {any} null when the field is provably empty: no value and no unparsable text left (a number field's value is
+ * "" for "-" too, with validity.badInput); else what is left, or "(text it cannot parse)" */
+function kbLeftOver() {
+  if (this.value !== '') return this.value;
+  return this.validity && this.validity.badInput ? '(text it cannot parse)' : null;
 }
 
 function kbIsMac() {
@@ -389,7 +422,9 @@ async function hitAt(tab, sessionId, p) {
   const m = await tab.client.call('Page.getLayoutMetrics', {}, sessionId);
   const v = m.cssLayoutViewport;
   try {
-    return await tab.client.call('DOM.getNodeForLocation', { x: Math.round(p.x + v.pageX), y: Math.round(p.y + v.pageY) }, sessionId);
+    // with user-agent shadow trees: a date field's year / month / day parts are nodes of their own (refs), and without
+    // it the hit would be the <input> around them, which is not inside the part (measured in Chrome for Testing 149)
+    return await tab.client.call('DOM.getNodeForLocation', { x: Math.round(p.x + v.pageX), y: Math.round(p.y + v.pageY), includeUserAgentShadowDOM: true }, sessionId);
   } catch (err) {
     if (err instanceof SdkError && err.code === 'cdp_error') return null; // "No node found at given location"
     throw err;
@@ -414,19 +449,46 @@ async function whatIs(tab, sessionId, hit) {
     /** @type {string[]} */ const at = d.node?.attributes ?? [];
     const attr = (/** @type {string} */ k) => { const i = at.indexOf(k); return i >= 0 && i % 2 === 0 ? String(at[i + 1] ?? '').replace(/["<>]/g, '').slice(0, 60) : ''; };
     if (d.node?.localName) tag = `<${d.node.localName}${attr('id') ? ` id="${attr('id')}"` : ''}${attr('class') ? ` class="${attr('class')}"` : ''}>`;
+    if (d.node?.pseudoType) {
+      const owner = hit.frameId ? await pseudoOwner(tab, hit).catch(() => null) : null;
+      return `the ${d.node.localName || `::${d.node.pseudoType}`} of ${owner ?? 'another element'} (CSS-generated content laid over the target: `
+        + 'a click there goes to that element, not to the target)';
+    }
   } catch { /* fall through */ }
   const what = [ax ? `${ax.role} ""` : '', tag].filter(Boolean).join(' ') || 'another element';
   return `${what} (it has no name: maybe the backdrop of a menu or dialog that is still open; press Escape, or take a new snapshot to see what is on top)`;
 }
 
+/** The element that generates a ::before / ::after that was hit, as <tag id class>, or null.
+ * @param {Tab} tab @param {{ backendNodeId: number, frameId: string }} hit */
+async function pseudoOwner(tab, hit) {
+  const stamp = tab.tree.stamp(hit.frameId);
+  if (!stamp) return null;
+  const obj = await tab.worlds.resolve(stamp, hit.backendNodeId);
+  try {
+    return /** @type {string | null} */ (await tab.worlds.callOn(stamp, obj, kbDescribeOwner));
+  } finally {
+    await tab.worlds.release(stamp, obj);
+  }
+}
+
+/** @this {any} */
+function kbDescribeOwner() {
+  const el = this && this.element;
+  if (!el || el.nodeType !== 1) return null;
+  const clean = (/** @type {string} */ v) => String(v).replace(/["<>]/g, '').slice(0, 60);
+  return `<${el.localName}${el.id ? ` id="${clean(el.id)}"` : ''}${el.getAttribute('class') ? ` class="${clean(el.getAttribute('class'))}"` : ''}${el.getAttribute('aria-label') ? ` aria-label="${clean(el.getAttribute('aria-label'))}"` : ''}>`;
+}
+
 /**
  * Everything that must still hold right before a press (steps 1-3 at the top of this file). Throws; returns nothing.
- * The caller sends with guardFor() for step 4.
- * @param {Tab} tab @param {string} ref @param {Located} loc @param {ActOptions} o
+ * The caller sends with guardFor() for step 4. `part`: a node inside the ref's node (in its user-agent shadow tree,
+ * a date field's year part) checked in its place; the context is the ref's, checked once on the ref itself.
+ * @param {Tab} tab @param {string} ref @param {Located} loc @param {ActOptions} o @param {Part | null} [part]
  */
-export async function verify(tab, ref, loc, o) {
+export async function verify(tab, ref, loc, o, part = null) {
   const { client, worlds } = tab;
-  const e = tab.entry(ref);
+  const e = part ? { ...tab.entry(ref), ...part } : tab.entry(ref);
   guardFor(tab, ref, loc.boundaries)();
 
   // 2. the frames on the way: measured again now that the pointer is there
@@ -454,7 +516,7 @@ export async function verify(tab, ref, loc, o) {
     if (!n || axRole(n) !== e.role || axName(n) !== e.name) {
       throw new SdkError('target_changed', `ref ${ref} was ${describe(e)} and is now ${n ? `${axRole(n)} ${JSON.stringify(axName(n))}` : 'not in the accessibility tree'}; not pressed`);
     }
-    if (o.context !== undefined && await worlds.callOn(e.stamp, target, kbContextHas, [o.context]) !== true) {
+    if (!part && o.context !== undefined && await worlds.callOn(e.stamp, target, kbContextHas, [o.context]) !== true) {
       throw new SdkError('target_changed', `ref ${ref}: ${JSON.stringify(o.context)} is no longer next to ${describe(e)}; not pressed`);
     }
 
@@ -504,18 +566,18 @@ async function assertTypable(tab, ref) {
 // --- actions (each holds the tab's input lock for its whole run; whatever it left pressed is released) ---
 
 /** locate -> move -> (check -> press -> release) x clicks. Caller holds the lock.
- * @param {Tab} tab @param {string} ref @param {ActOptions} o @param {number} clicks */
-async function pointAndPress(tab, ref, o, clicks) {
+ * @param {Tab} tab @param {string} ref @param {ActOptions} o @param {number} clicks @param {Part | null} [part] */
+async function pointAndPress(tab, ref, o, clicks, part = null) {
   if (!Number.isInteger(clicks) || clicks < 1 || clicks > 3) throw new SdkError('bad_argument', `clickCount must be 1, 2 or 3, not ${clicks}`);
   const fast = !!o.fast;
-  const e = tab.entry(ref);
+  const e = part ? { ...tab.entry(ref), ...part } : tab.entry(ref);
   const loc = await locate(tab, e);
   const moves = await tab.input.moveTo(loc.main, { fast, viewport: loc.viewport });
   await tab.input.pause(40, 120, fast);
   const guard = guardFor(tab, ref, loc.boundaries);
   for (let i = 1; i <= clicks; i++) {
     try {
-      await verify(tab, ref, loc, o);
+      await verify(tab, ref, loc, o, part);
     } catch (err) {
       if (i > 1 && err instanceof SdkError) err.message += ` (after ${i - 1} of ${clicks} presses)`;
       throw err;
@@ -552,6 +614,12 @@ export function type(tab, ref, text, o = {}) {
     if (await tab.onNode(ref, kbReadOnly) === true) {
       throw new SdkError('unsupported', `${describe(tab.entry(ref))} is read-only (readonly or disabled): nothing typed; if a date picker or a button sets it, use that`);
     }
+    const kind = await tab.onNode(ref, kbDateKind);
+    if (kind === 'date' || kind === 'month') return typeDate(tab, ref, text, kind, o);
+    if (kind) {
+      throw new SdkError('unsupported', `${describe(tab.entry(ref))} is an <input type=${kind}>: K-Browser types a whole value only into date and month fields; `
+        + 'type into its parts instead (the spinbutton refs inside it), one by one; nothing typed');
+    }
     const r = await pointAndPress(tab, ref, o, 1);
     // before every key: still focused, and still editable (a page may lock the field after the first character;
     // the rest would go nowhere while the next step, a submit, goes on)
@@ -561,14 +629,115 @@ export function type(tab, ref, text, o = {}) {
       const mac = await tab.onNode(ref, kbIsMac) === true;
       await tab.input.key(mac ? 'Meta+a' : 'Control+a', { fast, check, guard, commands: ['selectAll'] });
       const all = await tab.onNode(ref, kbAllSelected);
-      if (all !== true) {
+      if (all === null && await tab.onNode(ref, kbNoSelection) === true) {
+        // a number or email field has no selection offsets to read: clear it with Backspace (what select-all selected
+        // goes), then prove it is empty. A partial selection would have left something: then the field has changed
+        await sending(tab, () => tab.input.key('Backspace', { fast, check, guard }));
+        const left = await tab.onNode(ref, kbLeftOver);
+        if (left !== null) {
+          throw new SdkError('result_unknown', `${describe(tab.entry(ref))}: select-all and Backspace did not empty the field (it shows ${JSON.stringify(left)}); nothing typed, but the field has changed: read it before trying again`);
+        }
+      } else if (all !== true) {
         throw new SdkError('unsupported', `${describe(tab.entry(ref))}: ${all === false ? 'select-all did not select the whole field' : 'cannot tell whether select-all selected the whole field'}; nothing typed`);
       }
     }
+    // a number or email field has no caret position to check, and a page that rewrites it on every key can put the
+    // caret back at the start (533 became 330 in a React form): its value is read back, and must be the text when
+    // the field was empty before typing
+    const opaque = await tab.onNode(ref, kbNoSelection) === true;
+    const was = opaque ? await tab.onNode(ref, kbValue) : null;
     const typed = await sending(tab, () => tab.input.type(text, { fast, check, guard }));
+    if (opaque) {
+      const value = await tab.onNode(ref, kbValue);
+      const same = value === text || (await tab.onNode(ref, kbIsNumber) === true && value !== '' && Number(value) === Number(text));
+      if (was === '' && !same) {
+        throw new SdkError('result_unknown', `typed ${JSON.stringify(text)} into ${describe(tab.entry(ref))}, but its value is ${JSON.stringify(value)} (the page may have moved the caret while it was typed); read it, and type it again with replace`);
+      }
+      return { action: 'type', ...r, ...typed, fieldValue: value };
+    }
     return { action: 'type', ...r, ...typed,
       ...(typed.inserted ? { note: `${typed.inserted} character(s) were inserted as text (Input.insertText), not typed as keys` } : {}) };
   });
+}
+
+const DATE_FORMAT = { date: /^(\d{4})-(\d{2})-(\d{2})$/, month: /^(\d{4})-(\d{2})$/ };
+const DATE_PARTS = { date: ['year', 'month', 'day'], month: ['year', 'month'] };
+
+/**
+ * A date or month field takes its whole value (YYYY-MM-DD, YYYY-MM): each of its parts (year, month, day, in the
+ * order the page's locale shows them) is clicked and its digits typed, as a person does. Clicking the field as a
+ * whole would land on whichever part is under the point (a typed "20260101" then all goes into the day), and a part
+ * cannot be focused from script (DOM.focus: "Element is not focusable"); the year part never moves on by itself
+ * (it takes up to 6 digits). Afterwards the field's value must be the text, or the result is unknown.
+ * @param {Tab} tab @param {string} ref @param {string} text @param {'date' | 'month'} kind @param {ActOptions} o
+ */
+async function typeDate(tab, ref, text, kind, o) {
+  const fast = !!o.fast;
+  const e = tab.entry(ref);
+  const m = DATE_FORMAT[kind].exec(text);
+  if (!m) throw new SdkError('bad_argument', `${describe(e)} is a ${kind} field: give the text as ${kind === 'date' ? 'YYYY-MM-DD' : 'YYYY-MM'} (e.g. ${kind === 'date' ? '2026-01-15' : '2026-01'}), not ${JSON.stringify(text)}`);
+  const want = Object.fromEntries(DATE_PARTS[kind].map((k, i) => [k, m[i + 1]]));
+  const parts = await dateParts(tab, e, kind);
+  // the field itself, as a click target would be (role, name, context, nothing over it), before any part is pressed
+  await verify(tab, ref, await locate(tab, e), o);
+  const check = () => assertTypable(tab, ref);
+  const guard = guardFor(tab, ref);
+  const run = sending(tab, async () => {
+    /** @type {any} */ let first = null;
+    let keys = 0;
+    for (const p of parts) {
+      const r = await pointAndPress(tab, ref, o, 1, p);
+      first ??= r;
+      // the press focuses the part; a page re-rendering the field after the previous part (a React form) can take a
+      // moment to give it back (seen once on a real site): wait briefly, then the per-key check decides
+      for (let i = 0; i < 10 && await tab.onNode(ref, kbFocused) !== true; i++) await tab.input.sleep(50);
+      const typed = await tab.input.type(want[p.field], { fast, check, guard });
+      keys += typed.keys;
+      await tab.input.pause(60, 140, fast);
+    }
+    const value = await tab.onNode(ref, kbValue);
+    if (value !== text) {
+      throw new SdkError('result_unknown', `typed ${JSON.stringify(text)} part by part into ${describe(e)}, but its value is now ${JSON.stringify(value)}; read the page before doing it again`);
+    }
+    return { action: 'type', ...first, ref, role: e.role, name: e.name, keys, inserted: 0, fieldValue: value };
+  });
+  // stopped part way: say what the field holds now (the parts typed so far did go in)
+  return run.catch(async (err) => {
+    if (err instanceof SdkError && err.code === 'result_unknown' && !/its value is now/.test(err.message)) {
+      const now = await tab.onNode(ref, kbValue).catch(() => null);
+      if (typeof now === 'string') err.message += `; the field's value is now ${JSON.stringify(now)}`;
+    }
+    throw err;
+  });
+}
+
+/** The year / month / day parts of a date field's user-agent shadow tree, in the order shown, with their roles and names.
+ * @param {Tab} tab @param {RefEntry} e @param {'date' | 'month'} kind */
+async function dateParts(tab, e, kind) {
+  const sid = e.stamp.sessionId;
+  const d = await tab.client.call('DOM.describeNode', { backendNodeId: e.backendNodeId, depth: -1, pierce: true }, sid);
+  /** @type {{ field: string, backendNodeId: number }[]} */ const found = [];
+  const walk = (/** @type {any} */ n) => {
+    /** @type {string[]} */ const at = n.attributes ?? [];
+    const i = at.indexOf('pseudo');
+    const f = i >= 0 && i % 2 === 0 ? /^-webkit-datetime-edit-(year|month|day)-field$/.exec(String(at[i + 1])) : null;
+    if (f) found.push({ field: f[1], backendNodeId: n.backendNodeId });
+    for (const c of [...(n.shadowRoots ?? []), ...(n.children ?? [])]) walk(c);
+  };
+  walk(d.node ?? {});
+  if (!tab.tree.same(e.stamp)) throw new SdkError('stale_ref', `ref ${e.ref}: its frame changed while the field was read; take a new snapshot`);
+  const fields = found.map((x) => x.field);
+  if (fields.length !== DATE_PARTS[kind].length || DATE_PARTS[kind].some((k) => !fields.includes(k))) {
+    throw new SdkError('unsupported', `${describe(e)}: its parts are not the expected ${DATE_PARTS[kind].join(', ')} (found: ${fields.join(', ') || 'none'}); nothing typed`);
+  }
+  /** @type {(Part & { field: string })[]} */ const out = [];
+  for (const x of found) {
+    const ax = await tab.client.call('Accessibility.getPartialAXTree', { backendNodeId: x.backendNodeId, fetchRelatives: false }, sid);
+    const n = (ax.nodes ?? []).find((/** @type {any} */ y) => y.backendDOMNodeId === x.backendNodeId);
+    if (!n) throw new SdkError('unsupported', `${describe(e)}: its ${x.field} part is not in the accessibility tree; nothing typed`);
+    out.push({ field: x.field, backendNodeId: x.backendNodeId, role: axRole(n), name: axName(n) });
+  }
+  return out;
 }
 
 /** Press a key or combination on whatever has focus ("Enter", "Shift+Tab"). Not bound to a ref.
@@ -585,6 +754,7 @@ export function key(tab, combo, o = {}) {
   });
 }
 
+const SCROLL_POINTS = 6; // points of a partly covered ref a scroll tries before it gives up
 const TYPE_AHEAD_MS = 1000; // Chrome forgets type-to-select keys after 1 s (TypeAhead kTypeAheadTimeout)
 
 /**
@@ -592,10 +762,11 @@ const TYPE_AHEAD_MS = 1000; // Chrome forgets type-to-select keys after 1 s (Typ
  * checked like a click target first (role, name, context, nothing covering it), focused, and every key goes in only
  * while it still has the focus:
  *   1. type the option's label (the browser's type-to-select; it first waits out keys typed in the last second,
- *      which the browser would otherwise prepend);
+ *      which the browser would otherwise prepend). Characters that are not on a US keyboard (Chinese labels) go in
+ *      as key presses carrying the character, not as an insertion: type-to-select listens to key presses only;
  *   2. else type its first character again and again (type-to-select cycles through options starting with it);
  *   3. else arrow keys, except on macOS, where an arrow key opens the native menu instead of moving the selection.
- * Whatever cannot be reached this way is `unsupported` (e.g. a label that is not on a US keyboard, on macOS).
+ * Whatever cannot be reached this way is `unsupported` (e.g. on macOS, a label that starts with white space).
  * A custom drop-down is not a <select>: click it and its options instead.
  * @param {Tab} tab @param {string} ref @param {{ value?: string, label?: string }} want @param {ActOptions} [o]
  */
@@ -625,17 +796,19 @@ export function select(tab, ref, want, o = {}) {
       const wait = TYPE_AHEAD_MS + 100 - (Date.now() - tab.input.lastKeyAt);
       if (wait > 0) await tab.input.sleep(wait);
     };
-    const typeable = (/** @type {string} */ s) => s.length > 0 && [...s].every((ch) => /[ -~]/.test(ch));
+    // control characters and line breaks have no key that types them; leading white space would be a Space key, which
+    // opens the menu instead of searching
+    const typeable = (/** @type {string} */ s) => s.length > 0 && !/^\s/.test(s) && [...s].every((ch) => !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(ch));
 
     return sending(tab, async () => {
       if (typeable(label)) {
         await quiet();
-        await tab.input.type(label, { fast, check, guard });
+        await tab.input.type(label, { fast, check, guard, asKeys: true });
         if (await now() === index) return { ...report, changed: true, how: 'typed the label' };
-        const first = label[0];
+        const first = [...label][0];
         await quiet();
         for (let i = 0; i < state.options.length; i++) {
-          await tab.input.type(first, { fast, check, guard });
+          await tab.input.type(first, { fast, check, guard, asKeys: true });
           if (await now() === index) return { ...report, changed: true, how: `typed ${JSON.stringify(first)} ${i + 1} time(s)` };
         }
       }
@@ -671,9 +844,22 @@ export function scroll(tab, { ref, dx = 0, dy = 0 }, o = {}) {
     for (const d of [dx, dy]) if (!Number.isFinite(d)) throw new SdkError('bad_argument', `scroll distances must be finite numbers, not ${d}`);
     /** @type {import('./input.js').Guard | undefined} */ let guard;
     if (ref) {
-      const loc = await locate(tab, tab.entry(ref));
-      await tab.input.moveTo(loc.main, { fast, viewport: loc.viewport });
-      await verify(tab, ref, loc, o);
+      // a wheel over a ref that is partly covered (a fixed bar over a link): other points of it are tried, as a person
+      // moves the pointer to where the node shows; covered everywhere tried, no wheel at all (review ④)
+      /** @type {Located | null} */ let loc = null;
+      for (let i = 1; ; i++) {
+        loc = await locate(tab, tab.entry(ref));
+        await tab.input.moveTo(loc.main, { fast, viewport: loc.viewport });
+        try {
+          await verify(tab, ref, loc, o);
+          break;
+        } catch (err) {
+          if (!(err instanceof SdkError) || err.code !== 'occluded' || i >= SCROLL_POINTS) {
+            if (err instanceof SdkError && err.code === 'occluded') err.message += ` (tried ${i} points of it)`;
+            throw err;
+          }
+        }
+      }
       guard = guardFor(tab, ref, loc.boundaries);
     } else if (!tab.input.pointer) {
       const v = await mainViewport(tab);

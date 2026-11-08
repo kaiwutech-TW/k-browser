@@ -25,7 +25,8 @@ export const TOOLS = [
   {
     name: 'snapshot',
     description: `Accessibility tree of the page with refs for interactive nodes (all nodes with full). Refs go stale when the page changes. ${UNTRUSTED}`,
-    inputSchema: { type: 'object', properties: { tab, full: { type: 'boolean' } }, required: ['tab'] },
+    inputSchema: { type: 'object', properties: { tab, full: { type: 'boolean' },
+      within: { type: 'string', description: 'CSS selector (not a role): only that element\'s subtree, e.g. main, [role=main]' } }, required: ['tab'] },
   },
   {
     name: 'read',
@@ -66,7 +67,7 @@ export const TOOLS = [
   },
   {
     name: 'wait_for',
-    description: 'Decide whether an action worked, from assertions checked against the bridge\'s log and the page: completed only if all are proven. Levels: screen_changed (url, text), site_replied (network), business_confirmed (business: success, match and limits all required). quiet alone completes nothing.',
+    description: 'Decide whether an action worked, from assertions checked against the bridge\'s log and the page: completed only if all are proven. Levels: screen_changed (url, text), site_replied (network), business_confirmed (business: success, match and limits all required). quiet alone completes nothing. network, business and quiet need since.',
     inputSchema: { type: 'object', properties: {
       tab, since,
       assertions: { type: 'array', minItems: 1, items: { type: 'object', properties: {
@@ -123,6 +124,12 @@ export const TOOLS = [
     description: 'Your file area: list it; download a URL on the tab\'s own origin into it (max 25 MB); upload one of its files into a file input (ref).',
     inputSchema: { type: 'object', properties: { action: { enum: ['list', 'download', 'upload'] }, tab, url: { type: 'string' }, ref,
       name: { type: 'string', description: 'download: a name for the file; upload: a name from files list' } }, required: ['action'] },
+  },
+  {
+    name: 'webmcp',
+    description: `Tools the page itself offers (WebMCP, document.modelContext): list them (each gets a handle like w1.2, with its inputSchema), call one with args, or wait for a call that answered "waiting" (the page may be waiting for the user to approve). A tool the site marks consequential first needs the user's Allow in the K-Browser panel: the call waits for it (up to 120 s, or timeoutMs) and then goes on by itself; only if it answers awaiting_approval, call again with the same tool, args and its approvalId. Needs WebMCP on in the user's Chrome. ${UNTRUSTED}`,
+    inputSchema: { type: 'object', properties: { tab, action: { enum: ['list', 'call', 'wait'] }, tool: { type: 'string', description: 'call: handle from list' },
+      args: { type: 'object' }, invocationId: { type: 'string' }, approvalId: { type: 'string', description: 'call: from an awaiting_approval answer' }, timeoutMs: { type: 'number', description: 'call / wait: how long to wait for the answer (default 30000)' } }, required: ['tab', 'action'] },
   },
   {
     name: 'eval',

@@ -18,8 +18,8 @@ import { VERSION } from '../src/version.js';
 test('tools/list fits the 12 KB budget (UTF-8 bytes of its JSON) and has the tools', () => {
   const bytes = Buffer.byteLength(JSON.stringify({ tools: TOOLS }), 'utf8');
   assert.ok(bytes <= 12 * 1024, `${bytes} bytes`);
-  assert.ok(TOOLS.length <= 15);
-  assert.deepEqual(TOOLS.map((t) => t.name), ['tabs', 'navigate', 'snapshot', 'read', 'act', 'screenshot', 'network', 'wait_for', 'needs_human', 'run_flow', 'status', 'learnings', 'fetch', 'files', 'eval']);
+  assert.ok(TOOLS.length <= 16); // 16 with webmcp (user, 2026-11-09: DECISIONS)
+  assert.deepEqual(TOOLS.map((t) => t.name), ['tabs', 'navigate', 'snapshot', 'read', 'act', 'screenshot', 'network', 'wait_for', 'needs_human', 'run_flow', 'status', 'learnings', 'fetch', 'files', 'webmcp', 'eval']);
 });
 
 test('site patterns: bare host covers subdomains, scheme://host is one origin, *. adds subdomains', () => {
@@ -184,4 +184,32 @@ test('a tab whose Chrome profile is not known is not put in a space: it is close
   assert.equal(closed, 1, 'the tab was closed');
   assert.deepEqual(session.tabState().tabs, [], 'and no space was started');
   assert.equal(session.tabState().next, 1, 'its id is not given again');
+});
+
+test('field report 2026-11-09 #5: a page Chrome replaces keeps its tab id; a gone tab says why', async () => {
+  process.env.KBROWSER_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-mcp-'));
+  /** @type {((ev: any) => void)[]} */ const listeners = [];
+  /** @type {any} */ const browser = { client: { closedWhy: null, call: async () => ({}), onEvent: (/** @type {any} */ f) => { listeners.push(f); return () => {}; } }, close() {} };
+  const session = new McpSession({ name: 'codex', port: 1, record: { token: 't'.repeat(43) }, connect: async () => browser });
+  session.adopt({ next: 1, tabs: [{ alias: 't1', targetId: 'OLD', opener: false, wseq: 4 }] });
+  assert.equal(session.tabState().tabs[0].wseq, 4, 'WebMCP list numbers are handed on to the next worker (review ②)');
+  await session.call('tabs', { action: 'list' }); // connects
+  assert.ok(listeners.length > 0, 'the session listens for replacements');
+  for (const f of listeners) f({ method: 'Target.targetCreated', sessionId: null, params: { targetInfo: { targetId: 'NEW', openerId: 'OLD', kbReplaces: 'OLD' } } });
+  assert.deepEqual(session.tabState().tabs.map((t) => [t.alias, t.targetId]), [['t1', 'NEW']]);
+  // a tabs list between the old target going and the replacement arriving dropped t1; the
+  // replacement then came back as t2. It is still t1
+  for (const f of listeners) f({ method: 'Target.targetCreated', sessionId: null, params: { targetInfo: { targetId: 'NEW2', kbReplaces: 'NEW' } } });
+  assert.deepEqual(session.tabState().tabs.map((t) => [t.alias, t.targetId]), [['t1', 'NEW2']]);
+  /** @type {any[]} */ let targets = [];
+  browser.client.call = async (/** @type {string} */ m) => (m === 'Target.getTargets' ? { targetInfos: targets } : {});
+  await session.call('tabs', { action: 'list' }); // NEW2 is gone, its replacement not announced yet
+  assert.deepEqual(session.tabState().tabs, []);
+  for (const f of listeners) f({ method: 'Target.targetCreated', sessionId: null, params: { targetInfo: { targetId: 'NEW3', kbReplaces: 'NEW2' } } });
+  targets = [{ targetId: 'NEW3', type: 'page', url: 'about:blank', title: '' }];
+  const listed = JSON.parse((await session.call('tabs', { action: 'list' })).content[0].text.split('\n')[0]);
+  assert.deepEqual(listed.tabs.map((/** @type {any} */ t) => t.tab), ['t1']);
+  // a replacement of a target this session never had changes nothing
+  for (const f of listeners) f({ method: 'Target.targetCreated', sessionId: null, params: { targetInfo: { targetId: 'X2', kbReplaces: 'X1' } } });
+  assert.deepEqual(session.tabState().tabs.map((t) => t.targetId), ['NEW3']);
 });

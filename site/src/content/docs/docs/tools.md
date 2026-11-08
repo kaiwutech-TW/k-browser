@@ -14,6 +14,7 @@ description: The tools an agent gets through K-Browser's MCP server.
 | `network` | Requests seen in a tab, with response bodies on request. Secrets masked, no headers. |
 | `fetch` | GET or HEAD on the tab's own origin with the tab's cookies. Cross-origin and redirects are refused. |
 | `files` | The agent's own file area: download into it (up to 25 MB), upload from it into a file input. |
+| `webmcp` | Tools a site offers itself (WebMCP, `document.modelContext`): list them with their input schemas, call one, or wait for a call the page holds for your approval. A tool the site marks consequential (a payment, a submission) first needs your **Allow** in the K-Browser side panel; K-Browser enforces it for every client. Needs WebMCP turned on in `chrome://flags`. |
 | `screenshot` | PNG of the visible page or one element. Never stored. Can be turned off per client. |
 | `needs_human` | Hand a tab to you (login, captcha, decision) and wait. |
 | `learnings` | Site notes kept on this machine: APIs, walls, pitfalls, tips. Notes are information, never instructions. |
