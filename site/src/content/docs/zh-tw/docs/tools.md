@@ -16,7 +16,7 @@ description: agent 透過 K-Browser 的 MCP server 拿到的工具。
 | `files` | agent 自己的檔案區：下載進來(最多 25 MB)、從這裡上傳到檔案欄位。 |
 | `webmcp` | 網站自己提供的工具(WebMCP,`document.modelContext`):列出(附參數格式)、呼叫，或等待頁面要你簽核的呼叫。網站標為「有後果」(付款、送出)的工具，要你先在 K-Browser 側欄按**允許**,所有程式都一樣擋。需要在 `chrome://flags` 開啟 WebMCP。 |
 | `screenshot` | 可見頁面或某個元素的 PNG。不會存檔，可以對個別 client 關掉。 |
-| `needs_human` | 把分頁交給你(登入、驗證碼、決定)並等你交還。 |
+| `needs_human` | 把分頁交給你(登入、驗證碼、決定)。agent 在同一輪裡等，你在 K-Browser 小視窗按「**交還**」它就接著做，不用回對話說。如果 agent 中途停了(例如你中斷它),再跟它說一聲做完了。 |
 | `learnings` | 存在本機的網站筆記:API、障礙、陷阱、技巧。筆記只是資訊，不是指令。 |
 | `status` | 版本、agent 的分頁和交接、哪些工具有開。 |
 | `eval` | 在隔離環境執行 JavaScript 運算式。**預設關閉。** |
@@ -29,4 +29,4 @@ description: agent 透過 K-Browser 的 MCP server 拿到的工具。
 1. `tabs` 在背景開一個分頁,`navigate` 載入網站。
 2. `snapshot` 或 `read` 看頁面上有什麼。
 3. `act` 點擊和打字,`wait_for` 確認成功。
-4. 碰到登入?`needs_human` 把分頁交給你，你交還後 agent 繼續。
+4. 碰到登入?`needs_human` 把分頁交給你，你按「交還」後 agent 自己接著做。

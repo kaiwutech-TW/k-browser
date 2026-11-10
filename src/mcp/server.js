@@ -46,7 +46,24 @@ const MAX_STEPS = 10;
 const DROPPED_MS = 10_000; // how long a tab found missing can still come back as Chrome's replacement of it
 const POPUP_GRACE_MS = 300; // after an act, how long a popup it opened has to show up (the bridge adopts it first)
 const TELL_USER = 'A K-Browser tab needs the user: click the K-Browser icon in Chrome\'s toolbar, press Show (顯示) to see the tab, '
-  + 'do what is needed there, then press Return (交還). Ask needs_human {action:"status"} afterwards.';
+  + 'do what is needed there, then press Return (交還). The agent goes on by itself once it is returned.';
+const HANDOFF_NEXT = 'tell the user what tell_user says, then call needs_human {action:"wait", handoff} in this same turn: '
+  + 'it answers as soon as they press 交還';
+// needs_human wait: how long one call waits by default, by client name (measured 2026-11-10, record 261110-handoff-wait):
+//   codex        codex-cli 0.167 cuts a tool call at 300 s ("timed out awaiting tools/call after 300s"): 280 s
+//   claude-code  2.1.322: no limit seen up to 310 s; in a terminal session a call past 2 min goes to the background, the
+//                turn ends, and the agent is woken when the call answers: so wait until the hand-off itself ends
+//   anything else (Antigravity, Gemini CLI: not measured): 50 s
+// Only defaults: a name is the user's to choose, and a call cut off by the agent changes nothing (call wait again).
+const HANDOFF_WAIT_MS = 50_000;
+const HANDOFF_WAIT_MAX_MS = 30 * 60_000; // a hand-off's own time to live (src/handoff.js)
+/** @type {Record<string, number>} */
+const HANDOFF_WAIT_BY_CLIENT = { codex: 280_000, 'claude-code': HANDOFF_WAIT_MAX_MS };
+/** needs_human wait's default for this client. @param {string} name */
+export const handoffWaitDefault = (name) => (Object.hasOwn(HANDOFF_WAIT_BY_CLIENT, name) ? HANDOFF_WAIT_BY_CLIENT[name] : HANDOFF_WAIT_MS);
+const HANDOFF_POLL_MS = 300;
+const HANDOFF_QUERY_MS = 5000; // one handoffStatus at most this long (and never past the wait's end, but at least 1 s)
+const HANDOFF_PROGRESS_MS = 15_000;
 const BODY_SHOWN = 4000; // characters of one body in a network result
 const BODIES_SHOWN = 5;
 // HTML bodies are not returned: their markup can hold secrets (a password field's value attribute) that text rules
@@ -198,6 +215,8 @@ function pagePiece(id, start, len, drop) {
 /** @param {unknown} v @param {number} lo @param {number} hi @param {number} dflt */
 const clamp = (v, lo, hi, dflt) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(hi, Math.max(lo, Math.round(v))) : dflt);
 
+/** @typedef {{ token: string | number | undefined, notify: (n: { method: string, params: Record<string, any> }) => Promise<void> }} Progress */
+
 /**
  * The K-Browser version in the bridge's /json/version for this client; null when nothing answers, '' when the bridge
  * answers but does not know this client's token. @param {string} endpoint
@@ -243,6 +262,8 @@ export class McpSession {
     /** @type {Browser | null} */ this.browser = null;
     /** @type {Map<string, TabEntry>} alias -> tab */ this.tabs = new Map();
     /** @type {Map<string, string>} targetId -> alias */ this.aliases = new Map();
+    /** needs_human wait's pace (tests make it quicker) */
+    this.waitTiming = { pollMs: HANDOFF_POLL_MS, queryMs: HANDOFF_QUERY_MS, progressMs: HANDOFF_PROGRESS_MS };
     /** tabs dropped because their target was found missing, kept briefly: Chrome may be replacing the page, and the
      * replacement is announced only after its adoption (tabs.get) @type {Map<string, { alias: string, e: TabEntry, at: number }>} */
     this.dropped = new Map();
@@ -486,12 +507,16 @@ export class McpSession {
     };
   }
 
-  /** Call a tool; never throws. @param {string} name @param {Record<string, any>} args @param {AbortSignal} [signal] the request's cancellation */
-  async call(name, args, signal) {
+  /**
+   * Call a tool; never throws.
+   * @param {string} name @param {Record<string, any>} args @param {AbortSignal} [signal] the request's cancellation
+   * @param {Progress} [progress] the request's progress token and a way to send notifications (MCP progress)
+   */
+  async call(name, args, signal, progress) {
     const r = this.redactor();
     /** @type {Out} */ let out;
     try {
-      out = await this.#dispatch(name, args ?? {}, signal);
+      out = await this.#dispatch(name, args ?? {}, signal, progress);
     } catch (err) {
       if (err instanceof Blocked) {
         out = { head: { tab: args?.tab ?? null, status: 'blocked_origin', origin: err.origin ?? 'unknown' }, isError: true };
@@ -522,9 +547,9 @@ export class McpSession {
     await this.onTabs(state).catch(() => {});
   }
 
-  /** @param {string} name @param {Record<string, any>} a @param {AbortSignal} [signal] @returns {Promise<Out>} */
-  async #dispatch(name, a, signal) {
-    if (name === 'needs_human') return this.#needsHuman(a);
+  /** @param {string} name @param {Record<string, any>} a @param {AbortSignal} [signal] @param {Progress} [progress] @returns {Promise<Out>} */
+  async #dispatch(name, a, signal, progress) {
+    if (name === 'needs_human') return this.#needsHuman(a, signal, progress);
     if (name === 'run_flow') return this.#runFlow(a, signal);
     if (name === 'status') return this.#status();
     if (name === 'learnings') return this.#learnings(a);
@@ -571,8 +596,8 @@ export class McpSession {
     return { head: { tab: alias, dialog: String(d.id), handled: d.action } };
   }
 
-  /** @param {Record<string, any>} a @returns {Promise<Out>} */
-  async #needsHuman(a) {
+  /** @param {Record<string, any>} a @param {AbortSignal} [signal] @param {Progress} [progress] @returns {Promise<Out>} */
+  async #needsHuman(a, signal, progress) {
     const action = a.action ?? 'start';
     const b = await this.#browser();
     if (action === 'start') {
@@ -599,11 +624,72 @@ export class McpSession {
       }
       const state = now.state;
       return { head: { tab: alias, handoffId: h.handoffId, state, waiting: state === 'waiting', ...(now.why ? { why: now.why } : {}),
-        ...(h.existing ? { existing: true } : {}), ...(state === 'waiting' ? { tell_user: TELL_USER } : {}) } };
+        ...(h.existing ? { existing: true } : {}), ...(state === 'waiting' ? { tell_user: TELL_USER, next: HANDOFF_NEXT } : {}) } };
     }
-    if (action !== 'status' && action !== 'cancel') throw new ToolError('bad_argument', 'action must be start, status or cancel');
+    if (action !== 'status' && action !== 'cancel' && action !== 'wait') throw new ToolError('bad_argument', 'action must be start, status, wait or cancel');
     if (typeof a.handoff !== 'string') throw new ToolError('bad_argument', `${action} needs handoff (the id start returned)`);
-    const h = await b.client.call(action === 'status' ? 'KBrowser.handoffStatus' : 'KBrowser.cancelHandoff', { handoffId: a.handoff });
+    if (action === 'wait') return this.#waitHandoff(b, a.handoff, a.timeoutMs, signal, progress);
+    return this.#handoffView(await b.client.call(action === 'status' ? 'KBrowser.handoffStatus' : 'KBrowser.cancelHandoff', { handoffId: a.handoff }));
+  }
+
+  /**
+   * needs_human wait: ask the bridge every HANDOFF_POLL_MS until the hand-off is no longer waiting, the wait's time is up
+   * or the agent cancels the call. Each question is bounded by the time left, and the pauses and questions give way to
+   * a cancellation at once. Read-only: a call cut off (by the agent's own limit) changes nothing.
+   * @param {{ client: { call: (method: string, params?: Record<string, any>, sessionId?: string | null, o?: { timeoutMs?: number }) => Promise<any> } }} b @param {string} handoffId @param {unknown} timeoutMs
+   * @param {AbortSignal} [signal] @param {Progress} [progress] @returns {Promise<Out>}
+   */
+  async #waitHandoff(b, handoffId, timeoutMs, signal, progress) {
+    // at least a second: time for one answer from the bridge; never past it (each question gets only the time left)
+    const end = Date.now() + clamp(timeoutMs, 1000, HANDOFF_WAIT_MAX_MS, handoffWaitDefault(this.name));
+    const cancelled = () => new ToolError('cancelled', 'the wait was cancelled; the hand-off is unchanged');
+    if (signal?.aborted) throw cancelled();
+    /** @type {() => void} */ let stop = () => {};
+    const aborted = new Promise((_, reject) => {
+      const on = () => reject(cancelled());
+      signal?.addEventListener('abort', on, { once: true });
+      stop = () => signal?.removeEventListener('abort', on);
+    });
+    aborted.catch(() => {}); // only ever raced
+    let n = 0;
+    let done = false;
+    const ticker = progress?.token !== undefined ? setInterval(() => {
+      if (done || signal?.aborted) return;
+      progress.notify({ method: 'notifications/progress', params: { progressToken: progress.token, progress: ++n, message: 'waiting for the user to return the tab' } }).catch(() => {});
+    }, this.waitTiming.progressMs) : null;
+    try {
+      /** @param {any} h */
+      const stillWaiting = (h) => ({ head: { tab: h?.targetId ? this.aliases.get(h.targetId) ?? null : null, handoffId, state: 'waiting', waiting: true,
+        next: 'the user has not returned it yet: call needs_human {action:"wait"} again with this handoff (no need to tell the user again)' } });
+      /** @type {any} */ let last = null;
+      for (;;) {
+        const left = end - Date.now();
+        if (left <= 0) return stillWaiting(last);
+        /** @type {any} */ let h = null;
+        try {
+          h = await Promise.race([b.client.call('KBrowser.handoffStatus', { handoffId }, null,
+            { timeoutMs: Math.min(left, this.waitTiming.queryMs) }), aborted]);
+        } catch (e) {
+          if (e instanceof ToolError || !(e instanceof SdkError) || e.code !== 'result_unknown') throw e;
+          // no answer this time (read-only, so nothing is unknown): ask again while there is time
+        }
+        if (h && h.state !== 'waiting') return this.#handoffView(h);
+        if (h) last = h;
+        const now = Date.now();
+        if (now >= end) return stillWaiting(last);
+        /** @type {ReturnType<typeof setTimeout> | undefined} */ let t;
+        await Promise.race([new Promise((r) => { t = setTimeout(r, Math.min(this.waitTiming.pollMs, end - now)); }), aborted]).finally(() => clearTimeout(t));
+      }
+    } finally {
+      done = true;
+      if (ticker) clearInterval(ticker);
+      stop();
+    }
+  }
+
+  /** A hand-off as the bridge reported it, for the agent: its tab id, and where the user left it as the site policy allows.
+   * @param {any} h @returns {Out} */
+  #handoffView(h) {
     const alias = h.targetId ? this.aliases.get(h.targetId) ?? null : null;
     /** @type {Record<string, any>} */
     const head = { tab: alias, handoffId: h.handoffId, state: h.state, ...(h.why ? { why: h.why } : {}) };
@@ -1385,7 +1471,8 @@ export async function serveMcp({ name, port }) {
   process.on('unhandledRejection', (e) => log(`k-browser mcp: unhandled ${e instanceof Error ? e.stack : String(e)}`));
   const server = new Server({ name: 'k-browser', version: VERSION }, { capabilities: { tools: {} }, instructions: INSTRUCTIONS });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: session.tools() }));
-  server.setRequestHandler(CallToolRequestSchema, async (req, extra) => session.call(req.params.name, req.params.arguments ?? {}, extra.signal));
+  server.setRequestHandler(CallToolRequestSchema, async (req, extra) => session.call(req.params.name, req.params.arguments ?? {}, extra.signal,
+    { token: req.params._meta?.progressToken, notify: (n) => extra.sendNotification(/** @type {any} */ (n)) }));
   if (shimInfo()) {
     // the shim's own messages: the tab table goes to it before any result that shows it, and comes back to the next worker
     session.onTabs = (state) => server.notification({ method: 'k-browser/tabs', params: state });

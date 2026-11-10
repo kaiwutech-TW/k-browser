@@ -14,6 +14,8 @@ import * as model from './model.js';
 import * as profiles from './profiles.js';
 import { redactor } from './redact.js';
 import { install, InstallError, restore } from './install.js';
+import { launcherMain } from './launcher.js';
+import { identity } from './locate.js';
 import { LABEL, probePort, rotateLogs, ServiceError, serviceInstall, serviceRestart, serviceStatus, serviceUninstall } from './launchd.js';
 import { serveMcp } from './mcp/server.js';
 import { runShim } from './mcp/shim.js';
@@ -54,8 +56,8 @@ const USAGE = `usage: k-browser [--port N] <command>
                          where Kav's decisions go: the local Kev (default), TypeSafe's JEV (shows what is sent, asks to
                          agree, keeps the key in ~/.k-browser/jev.key), or nowhere (handed back to the agent)
   kav [<dir> | off]      the Kav checkout run_flow uses (needs <dir>/.venv)
-  update                 git pull this checkout, npm ci and restart the bridge (then reload the
-                         extension at chrome://extensions)
+  update                 get the newest K-Browser and restart the bridge (then reload the extension at
+                         chrome://extensions): npm installs ~/.k-browser/app; a git clone is pulled (git pull, npm ci)
   doctor                 check bridge, pairing and extension
   extension-path         print the unpacked extension directory`;
 
@@ -69,6 +71,12 @@ export async function main(argv) {
     args.splice(i, 2);
   }
   const [cmd, ...rest] = args;
+  // run from npx's cache (or any other npm install): install puts K-Browser at ~/.k-browser/app, and that copy runs
+  // every command. mcp-worker is only ever started by this same copy's own shim.
+  if (cmd && cmd !== 'mcp-worker' && identity() === 'launcher') {
+    const code = await launcherMain(argv, cmd, rest);
+    if (code !== null) return code;
+  }
   switch (cmd) {
     case 'bridge': {
       // under launchd stderr is bridge.err.log: each line says when

@@ -1,6 +1,10 @@
 // @ts-check
-// `k-browser update`: bring this checkout up to date and put the new version to work.
+// `k-browser update`: bring this copy up to date and put the new version to work.
 //
+// The npm install (~/.k-browser/app, made by `npx k-browser install`; see locate.js):
+//   npm install k-browser@latest into ~/.k-browser/app.staging, then swapped in when it is another version. Only that
+//   copy updates itself: a launcher hands `update` to it (its own cli.js path is what the LaunchAgent check accepts).
+// A git clone:
 //   git pull --ff-only   refused when tracked files have local changes, or the branch tracks nothing
 //   npm ci               after every pull (every version bump changes package.json and the lock file, so "did the
 //                        packages change" is not worth guessing), or when node_modules is missing; ci, not install, so
@@ -15,7 +19,9 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { withLock } from './install.js';
 import { probePort, ServiceError, serviceRestart, serviceStatus } from './launchd.js';
+import { appDir, compareVersions, identity, recover, specFor, stage, swapIn, versionAt as versionIn } from './locate.js';
 
 export const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const RELEASES = 'https://github.com/kaiwutech-TW/k-browser/releases';
@@ -42,6 +48,33 @@ const tail = (s) => s.trim().split('\n').slice(-8).join('\n');
  */
 export async function update({ root = ROOT, port, run = realRun, say = (s) => console.log(s),
   service = { status: () => serviceStatus({ port }), restart: () => serviceRestart({ port, say: () => {} }) }, probe = probePort, waitMs = 15000 }) {
+  const got = identity(root) === 'app' ? await fromNpm({ root, run, say }) : fromGit({ root, run, say });
+  return { ...got, restarted: await putToWork({ ...got, port, say, service, probe, waitMs }) };
+}
+
+/**
+ * ~/.k-browser/app: the newest release into app.staging, swapped in when it is another version.
+ * @param {{ root: string, run: Run, say: (s: string) => void }} o
+ */
+async function fromNpm({ root, run, say }) {
+  const from = versionAt(root);
+  let to = from;
+  await withLock(async () => {
+    recover(say);
+    const v = stage(specFor('latest'), { run, say });
+    if (compareVersions(v, from) <= 0) {
+      fs.rmSync(`${appDir()}.staging`, { recursive: true, force: true }); // the same (or an older) version: keep what is there
+      return;
+    }
+    swapIn();
+    to = versionIn(root) ?? v;
+  });
+  say(to === from ? `already the newest release (${to})` : `K-Browser ${from} -> ${to}`);
+  return { from, to, pulled: to !== from, installed: to !== from };
+}
+
+/** A git clone: pull, then npm ci. @param {{ root: string, run: Run, say: (s: string) => void }} o */
+function fromGit({ root, run, say }) {
   const git = (/** @type {string[]} */ ...args) => run('git', args, root);
   const top = git('rev-parse', '--show-toplevel');
   if (top.status !== 0 || !samePath(top.stdout.trim(), root)) {
@@ -79,7 +112,15 @@ export async function update({ root = ROOT, port, run = realRun, say = (s) => co
     }
     installed = true;
   }
+  return { from, to, pulled, installed };
+}
 
+/**
+ * Restart the LaunchAgent's bridge when it runs another version than the one on disk; say what is left to do.
+ * @param {{ to: string, pulled: boolean, port: number, say: (s: string) => void, service: { status: () => { loaded: boolean }, restart: () => void },
+ *   probe: typeof probePort, waitMs: number }} o
+ */
+async function putToWork({ to, pulled, port, say, service, probe, waitMs }) {
   const running = await probe(port);
   const runningVersion = running.kind === 'bridge' ? String(running.health.version) : null;
   let restarted = false;
@@ -110,7 +151,7 @@ export async function update({ root = ROOT, port, run = realRun, say = (s) => co
     say('now press ↻ on K-Browser at chrome://extensions, in each Chrome profile that has it; agents follow by themselves '
       + '(one started before 0.5.0 needs reconnecting once). `k-browser doctor` checks everything.');
   }
-  return { from, to, pulled, installed, restarted };
+  return restarted;
 }
 
 /** @param {string} a @param {string} b */

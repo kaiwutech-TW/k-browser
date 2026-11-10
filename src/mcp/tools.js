@@ -86,10 +86,11 @@ export const TOOLS = [
   },
   {
     name: 'needs_human',
-    description: 'Hand a tab to the user (a login, a captcha, a decision). Tell the user what tell_user says; until they return it, every tool on that tab answers handed_off. returned does not mean the task succeeded.',
+    description: 'Hand a tab to the user (a login, a captcha, a decision). Tell the user what tell_user says, then call wait in the same turn: it answers when they press 交還 (Return); on waiting, call wait again. Until it is returned every tool on that tab answers handed_off. returned does not mean the task succeeded.',
     inputSchema: { type: 'object', properties: {
-      action: { enum: ['start', 'status', 'cancel'] }, tab, reason: { type: 'string', description: 'start: what the user should do (max 200)' },
-      handoff: { type: 'string', description: 'status, cancel: the id start returned' },
+      action: { enum: ['start', 'wait', 'status', 'cancel'] }, tab, reason: { type: 'string', description: 'start: what the user should do (max 200)' },
+      handoff: { type: 'string', description: 'wait, status, cancel: the id start returned' },
+      timeoutMs: { type: 'number', description: 'wait: at most this long (default set for your agent; 1000 to 1800000)' },
     } },
   },
   {

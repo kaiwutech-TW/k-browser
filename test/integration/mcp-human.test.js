@@ -254,6 +254,30 @@ test('needs_human: waiting -> returned; meanwhile every tool answers handed_off;
   await m.call('tabs', { action: 'close', tab });
 });
 
+test('needs_human wait: answers within a second of 交還, in the same call; waiting when its time is up; expired after the TTL', { skip }, async () => {
+  const tab = await openTab(site.A('/plain'));
+  const h = await m.call('needs_human', { tab, reason: 'please log in' });
+  assert.match(h.head.next, /needs_human \{action:"wait"/, h.text);
+  assert.match(h.head.tell_user, /goes on by itself/);
+  const short = await m.call('needs_human', { action: 'wait', handoff: h.head.handoffId, timeoutMs: 500 });
+  assert.deepEqual([short.isError, short.head.state, short.head.waiting], [false, 'waiting', true], short.text);
+  const waiting = m.call('needs_human', { action: 'wait', handoff: h.head.handoffId, timeoutMs: 20_000 });
+  await sleep(1500);
+  const pressed = Date.now();
+  assert.ok(await chrome.returnHandoff(h.head.handoffId));
+  const w = await waiting;
+  const after = Date.now() - pressed;
+  assert.deepEqual([w.isError, w.head.state], [false, 'returned'], w.text);
+  assert.ok(after < 1000, `answered ${after} ms after 交還`);
+  assert.match(w.page ?? '', /\/plain/, 'where the user left it');
+  assert.equal((await m.call('read', { tab })).isError, false, 'tools work again');
+
+  const b = await m.call('needs_human', { tab, reason: 'b' });
+  const e = await m.call('needs_human', { action: 'wait', handoff: b.head.handoffId, timeoutMs: TTL_MS + 5000 });
+  assert.equal(e.head.state, 'expired', e.text);
+  await m.call('tabs', { action: 'close', tab });
+});
+
 // a hand-off made while this session is still typing
 test('needs_human while an act is still typing: the typing stops before needs_human answers', { skip }, async () => {
   const tab = await openTab(site.A('/long-input'));

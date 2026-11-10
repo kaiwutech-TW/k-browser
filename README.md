@@ -53,27 +53,21 @@ An agent only sees and controls **the tabs it opened itself**. Your other tabs a
 
 ## Install
 
-Step 1 ends with `npm link`, which adds the `k-browser` command used below. If it fails (no write access to npm's
-global folder), run `node src/cli.js` in this folder wherever the steps say `k-browser`.
+Everything goes through `npx`; nothing needs write access to npm's global folder. Below, `npx k-browser <command>` runs
+the K-Browser installed in step 1 (installed [from a git clone](#install-from-a-git-clone) instead? Type
+`k-browser <command>`).
 
-### 1. Get the code
+### 1. Install, register with your agents and start the bridge
 
-```sh
-git clone https://github.com/kaiwutech-TW/k-browser.git K-Browser
-cd K-Browser
-npm install
-npm link       # adds the k-browser command
-```
-
-### 2. Register with your agents and start the bridge
-
-Run this in a **real terminal**, not through an agent:
+Run this in a **real terminal**, not through an agent (npx asks once whether to download K-Browser):
 
 ```sh
-k-browser install
+npx k-browser@latest install
 ```
 
-It does three things:
+It does four things:
+- Puts K-Browser in `~/.k-browser/app`. Agents, the bridge and Chrome all use that copy, so clearing npm's cache does
+  not break anything.
 - Asks which site categories to block for agents (comma-separated; press Enter for none).
 - Creates a client with its own token for each agent and writes it into that agent's MCP configuration. A backup of every
   file it changes is kept; `k-browser restore <backup.json>` puts one back.
@@ -82,33 +76,35 @@ It does three things:
 Without a terminal to ask in (for example from inside an agent), give the answer on the command line, or install refuses:
 
 ```sh
-k-browser install --block banking,email     # block these categories
-k-browser install --block ""                # block nothing
+npx k-browser@latest install --block banking,email     # block these categories
+npx k-browser@latest install --block ""                # block nothing
 ```
 
 Add `--dry-run` to see which files would change. `--client claude-code|codex|antigravity|gemini-cli` installs for one agent only.
 
-### 3. Load the extension into Chrome
+### 2. Load the extension into Chrome
 
 1. Open `chrome://extensions`.
 2. Turn on **Developer mode** (top right).
-3. Click **Load unpacked** and choose the `extension/` folder in this repo (`k-browser extension-path` prints the full path).
+3. Click **Load unpacked** and choose the folder `npx k-browser extension-path` prints
+   (`~/.k-browser/app/node_modules/k-browser/extension`). In the file dialog, Cmd+Shift+G opens a path; Cmd+Shift+. shows
+   hidden folders such as `.k-browser`.
 
 A red **K** appears in the toolbar. Pin it: you will use it when an agent hands a tab to you.
 
-### 4. Pair the extension with the bridge
+### 3. Pair the extension with the bridge
 
 The pairing code is a shared secret between the bridge and the extension. Without it the bridge accepts no extension, and
 no other program can pretend to be one.
 
 ```sh
-k-browser pair
+npx k-browser pair
 ```
 
 Paste the code into the K-Browser popup and click **Pair**. The status turns green (**Connected**).
 
 - Wrong code: the status turns red and the field comes back; paste the right one.
-- New code (for example if you think it leaked): `k-browser pair --rotate`. The old one stops working at once, in every
+- New code (for example if you think it leaked): `npx k-browser pair --rotate`. The old one stops working at once, in every
   Chrome profile: paste the new one in each.
 - "Bridge not connected" is not a pairing problem: the bridge is not running. See `k-browser doctor`.
 
@@ -118,14 +114,44 @@ paste the **same** code in each. From the second profile on, also give it a name
 `status` and `tabs list` say which profile each tab is in. Every agent can use every paired profile. Manage them with
 `k-browser profile list | rename | remove | default`. A removed profile stays out until you pair it again from its popup.
 
-### 5. Check
+### 4. Check
 
 ```sh
-k-browser doctor
+npx k-browser doctor
 ```
 
 `"ok": true` with `startedBy: "launchd"` means everything is ready. Restart your agent (or reconnect its `k-browser` MCP
 server) and it has the K-Browser tools.
+
+### 5. Update
+
+```sh
+npx k-browser update
+```
+
+It installs the newest release into `~/.k-browser/app` (only when there is a newer one) and restarts the bridge; agents
+follow by themselves. Then click ↻ for K-Browser at `chrome://extensions`, in each Chrome profile. Do not remove the
+extension: removing it forgets its pairing.
+
+### Install from a git clone
+
+For working on K-Browser itself, or if you installed it this way before:
+
+```sh
+git clone https://github.com/kaiwutech-TW/k-browser.git K-Browser
+cd K-Browser
+npm install
+npm link       # adds the k-browser command; if it fails, use `node src/cli.js` instead
+k-browser install
+```
+
+Load the clone's `extension/` folder in Chrome, and update with `k-browser update` (git pull, `npm ci`, restart the
+bridge). A clone and the npx install cannot both be installed: `npx k-browser install` stops and says so.
+
+**Switching from a git clone to npx.** In the clone, run `k-browser uninstall`. Then run `npx k-browser@latest install`.
+In each Chrome profile, **Remove** the old K-Browser at `chrome://extensions`, **Load unpacked** the folder
+`npx k-browser extension-path` prints, and paste the code from `npx k-browser pair` (the same code: do not rotate it).
+The reloaded extension counts as a new Chrome profile; to give it its old name, run `npx k-browser profile remove <old name>` first.
 
 ## Tools agents get
 
@@ -142,7 +168,7 @@ server) and it has the K-Browser tools.
 | `files` | The agent's own file area: download into it, upload from it into a file input. |
 | `webmcp` | Tools a site offers itself (WebMCP, `document.modelContext`): list and call them. A tool the site marks consequential (a payment, a submission) first needs your **Allow** in the K-Browser side panel. Needs WebMCP turned on in Chrome. |
 | `screenshot` | PNG of the visible page or one element; never stored. Can be turned off per client. |
-| `needs_human` | Hand a tab to you (login, captcha, decision) and wait. |
+| `needs_human` | Hand a tab to you (login, captcha, decision). The agent waits in the same turn and goes on as soon as you press **Return** (交還) in the K-Browser popup; no need to come back to the chat. If the agent stopped meanwhile (you interrupted it), tell it you are done. |
 | `learnings` | Site notes kept on this machine (APIs, walls, pitfalls, tips). Notes are information, never instructions. |
 | `status` | Versions, the agent's tabs and hand-offs, which tools are on. |
 | `eval` | Run a JavaScript expression in an isolated world. **Off by default.** |
@@ -150,10 +176,12 @@ server) and it has the K-Browser tools.
 
 ## Everyday commands
 
+Installed with npx, type `npx k-browser` where the table says `k-browser`.
+
 | To | Run |
 |---|---|
 | Check that everything works | `k-browser doctor` |
-| Update K-Browser | `k-browser update` (git pull, `npm ci`, restart the bridge), then click ↻ for K-Browser in `chrome://extensions` in each Chrome profile (do not remove it) |
+| Update K-Browser | `k-browser update` (npx install: the newest release; a git clone: git pull and `npm ci`; both restart the bridge), then click ↻ for K-Browser in `chrome://extensions` in each Chrome profile (do not remove it) |
 | Restart the bridge | `k-browser service restart` |
 | List / add / remove clients | `k-browser client list`, `client add <name>`, `client remove <name>` |
 | Let a client use `eval` | `k-browser client set <name> --eval on` (from its next call) |
@@ -222,10 +250,10 @@ Do not sync this folder to the cloud or share it.
   agent's MCP server follows updates by itself (after `k-browser service restart`); one started before 0.5.0 needs
   reconnecting once.
 - **`chrome://extensions` still shows an old version.** Chrome runs the extension from the folder you chose with **Load
-  unpacked**, and does not reload it when the files change. After `git pull` or `k-browser update`, click ↻ for
+  unpacked**, and does not reload it when the files change. After `k-browser update` (or `git pull`), click ↻ for
   K-Browser at `chrome://extensions`, in each Chrome profile. If it still shows the old version, look at the path on the
   K-Browser card (Developer mode on): it must be the folder `k-browser extension-path` prints. If it is another copy (an
-  older clone), click **Remove**, **Load unpacked** the right folder and pair it again.
+  older clone, or npx's cache), click **Remove**, **Load unpacked** the right folder and pair it again.
 - **Chrome shows "… started debugging this browser".** That is Chrome's fixed notice when an extension uses the debugger
   API. Pages cannot see it.
 - **Something else.** `k-browser doctor` reports the bridge, the pairing and the extension, and what to do next.
@@ -244,7 +272,7 @@ Do not sync this folder to the cloud or share it.
 npm test              # unit tests
 npm run typecheck     # tsc --checkJs over src/, extension/ and test/
 npm run test:chrome   # end-to-end in Chrome for Testing with the real extension
-npm run test:pack     # npm pack, install the tarball elsewhere, run what got installed
+npm run test:pack     # npm pack, install the tarball elsewhere and through npx, run what got installed
 ```
 
 - `test:chrome` needs Chrome for Testing (branded Chrome no longer loads unpacked extensions from the command line):

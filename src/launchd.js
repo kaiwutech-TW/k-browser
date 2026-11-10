@@ -149,11 +149,19 @@ const sha = (text) => createHash('sha256').update(text).digest('hex');
 function ourPlist(text, w) {
   const rec = records()[w.label];
   if (!rec || !samePath(rec.plist, w.plist) || rec.sha256 !== sha(text)) return null;
-  const m = /<key>ProgramArguments<\/key>\s*<array>((?:\s*<string>[^<]*<\/string>)*)\s*<\/array>/.exec(text);
-  const un = (/** @type {string} */ v) => v.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-  const argv = m ? [...m[1].matchAll(/<string>([^<]*)<\/string>/g)].map((x) => un(x[1])) : null;
+  const argv = plistArgs(text);
   return isOurBridge(argv) ? argv : null;
 }
+
+/** The ProgramArguments of a plist's text, or null. @param {string} text */
+export function plistArgs(text) {
+  const m = /<key>ProgramArguments<\/key>\s*<array>((?:\s*<string>[^<]*<\/string>)*)\s*<\/array>/.exec(text);
+  const un = (/** @type {string} */ v) => v.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  return m ? [...m[1].matchAll(/<string>([^<]*)<\/string>/g)].map((x) => un(x[1])) : null;
+}
+
+/** Where the LaunchAgent's plist is. @param {Where} [w] */
+export const plistPath = (w) => where(w).plist;
 
 /** The same file (launchd prints the real path: /var is /private/var on macOS)? @param {string | null} a @param {string} b */
 function samePath(a, b) {

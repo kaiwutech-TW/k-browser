@@ -5,10 +5,12 @@ description: Everyday k-browser commands and what the side panel can change.
 
 ## Everyday commands
 
+Installed with npx, type `npx k-browser` where the table says `k-browser`.
+
 | To | Run |
 |---|---|
 | Check that everything works | `k-browser doctor` |
-| Update K-Browser | `k-browser update` (git pull, `npm ci`, restart the bridge), then click ↻ for K-Browser in `chrome://extensions` in each Chrome profile (do not remove it) |
+| Update K-Browser | `k-browser update` (npx install: the newest release; a git clone: git pull and `npm ci`; both restart the bridge), then click ↻ for K-Browser in `chrome://extensions` in each Chrome profile (do not remove it) |
 | Restart the bridge | `k-browser service restart` |
 | List / add / remove clients | `k-browser client list`, `client add <name>`, `client remove <name>` |
 | Let a client use `eval` | `k-browser client set <name> --eval on` (from its next call) |

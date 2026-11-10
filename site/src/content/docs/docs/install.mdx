@@ -1,66 +1,58 @@
 ---
 title: Install
-description: Install the bridge, register your agents, load the extension and pair it.
+description: Install with npx, register your agents, load the extension and pair it.
 ---
 
 import { Aside, Steps } from '@astrojs/starlight/components';
 
 **Requirements:** macOS · Google Chrome 125 or later · Node.js 22 or later (`node -v`).
 
-Step 1 ends with `npm link`, which adds the `k-browser` command used below. If it fails (no write access to npm's
-global folder), run `node src/cli.js` in the K-Browser folder wherever the steps say `k-browser`.
+Everything goes through `npx`; nothing needs write access to npm's global folder. `npx k-browser <command>` runs the
+K-Browser installed in step 1.
 
 <Steps>
 
-1. **Get the code**
+1. **Install, register with your agents and start the bridge**
+
+   Run this in a real terminal, not through an agent (npx asks once whether to download K-Browser):
 
    ```sh
-   git clone https://github.com/kaiwutech-TW/k-browser.git K-Browser
-   cd K-Browser
-   npm install
-   npm link       # adds the k-browser command
+   npx k-browser@latest install
    ```
 
-2. **Register with your agents and start the bridge**
-
-   Run this in a real terminal, not through an agent:
-
-   ```sh
-   k-browser install
-   ```
-
-   It asks which [site categories](/docs/safety/#blocked-site-categories) to block for agents (comma-separated; Enter for
-   none), creates a client with its own token for each agent and writes it into that agent's MCP configuration, and
-   installs the bridge as a LaunchAgent so it starts when you log in. Every file it changes is backed up first;
-   `k-browser restore <backup.json>` puts one back.
+   It puts K-Browser in `~/.k-browser/app` (agents, the bridge and Chrome all use that copy, so clearing npm's cache
+   breaks nothing), asks which [site categories](/docs/safety/#blocked-site-categories) to block for agents
+   (comma-separated; Enter for none), creates a client with its own token for each agent and writes it into that agent's
+   MCP configuration, and installs the bridge as a LaunchAgent so it starts when you log in. Every file it changes is
+   backed up first; `npx k-browser restore <backup.json>` puts one back.
 
    Without a terminal to ask in, give the answer on the command line, or install refuses:
 
    ```sh
-   k-browser install --block banking,email     # block these categories
-   k-browser install --block ""                # block nothing
+   npx k-browser@latest install --block banking,email     # block these categories
+   npx k-browser@latest install --block ""                # block nothing
    ```
 
    `--dry-run` shows which files would change; `--client claude-code|codex|antigravity|gemini-cli` installs for one agent.
 
-3. **Load the extension into Chrome**
+2. **Load the extension into Chrome**
 
-   Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and choose the `extension/` folder
-   (`k-browser extension-path` prints the full path). Pin the red **K** in the toolbar: you will use it when an agent
-   hands a tab to you.
+   Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and choose the folder
+   `npx k-browser extension-path` prints (`~/.k-browser/app/node_modules/k-browser/extension`; in the file dialog
+   Cmd+Shift+G opens a path). Pin the red **K** in the toolbar: you will use it when an agent hands a tab to you.
 
-4. **Pair the extension with the bridge**
+3. **Pair the extension with the bridge**
 
    ```sh
-   k-browser pair
+   npx k-browser pair
    ```
 
    Paste the code into the K-Browser popup and click **Pair**. The status turns green (**Connected**).
 
-5. **Check**
+4. **Check**
 
    ```sh
-   k-browser doctor
+   npx k-browser doctor
    ```
 
    `"ok": true` with `startedBy: "launchd"` means everything is ready. Restart your agent (or reconnect its `k-browser`
@@ -70,8 +62,8 @@ global folder), run `node src/cli.js` in the K-Browser folder wherever the steps
 
 <Aside type="note" title="About the pairing code">
 The pairing code is a shared secret between the bridge and the extension. Without it the bridge accepts no extension, and
-no other program can pretend to be one. `k-browser pair --rotate` makes a new one; the old one stops working at once.
-"Bridge not connected" is not a pairing problem — the bridge is not running; see `k-browser doctor`.
+no other program can pretend to be one. `npx k-browser pair --rotate` makes a new one; the old one stops working at once.
+"Bridge not connected" is not a pairing problem — the bridge is not running; see `npx k-browser doctor`.
 </Aside>
 
 <Aside type="tip">
@@ -81,10 +73,31 @@ The extension follows Chrome's language: Traditional Chinese, or English for eve
 ## Updating
 
 ```sh
-k-browser update
+npx k-browser update
 ```
 
-It pulls the new code (`git pull --ff-only`), installs its packages (`npm ci`) and restarts the bridge. Then click ↻ for
-K-Browser at `chrome://extensions` in each Chrome profile that has it: Chrome does not let a program reload an unpacked
-extension. Agents follow by themselves. It stops without changing anything if files in the folder have local changes.
-If you downloaded a zip instead of cloning, download the new release and replace the folder.
+It installs the newest release into `~/.k-browser/app` (only when there is a newer one) and restarts the bridge. Then
+click ↻ for K-Browser at `chrome://extensions` in each Chrome profile that has it: Chrome does not let a program reload
+an unpacked extension. Do not remove the extension: removing it forgets its pairing. Agents follow by themselves.
+
+## Install from a git clone
+
+For working on K-Browser itself, or if you installed it this way before:
+
+```sh
+git clone https://github.com/kaiwutech-TW/k-browser.git K-Browser
+cd K-Browser
+npm install
+npm link       # adds the k-browser command; if it fails, use `node src/cli.js` instead
+k-browser install
+```
+
+Load the clone's `extension/` folder in Chrome. `k-browser update` then pulls the new code (`git pull --ff-only`),
+installs its packages (`npm ci`) and restarts the bridge; it stops without changing anything if files in the folder have
+local changes. A clone and the npx install cannot both be installed: `npx k-browser install` stops and says so.
+
+**Switching from a git clone to npx.** In the clone, run `k-browser uninstall`, then `npx k-browser@latest install`. In
+each Chrome profile, **Remove** the old K-Browser at `chrome://extensions`, **Load unpacked** the folder
+`npx k-browser extension-path` prints, and paste the code from `npx k-browser pair` (the same code: do not rotate it).
+The reloaded extension counts as a new Chrome profile; to give it its old name, run
+`npx k-browser profile remove <old name>` first.

@@ -41,26 +41,18 @@ agent 只看得到、只操作得了**它自己開的分頁**。你的其他分�
 
 ## 安裝
 
-第 1 步最後的 `npm link` 會加入下面用到的 `k-browser` 指令。如果它失敗(沒有 npm 全域資料夾的寫入權限),下面寫 `k-browser` 的地方，改成在這個資料夾裡執行 `node src/cli.js`。
+全部透過 `npx` 執行，不需要 npm 全域資料夾的寫入權限。下面的 `npx k-browser <指令>` 會交給第 1 步裝好的 K-Browser 執行(是[從 git clone 安裝](#從-git-clone-安裝)的話，改打 `k-browser <指令>`)。
 
-### 1. 取得程式
+### 1. 安裝、登記到你的 agent,並啟動橋接
 
-```sh
-git clone https://github.com/kaiwutech-TW/k-browser.git K-Browser
-cd K-Browser
-npm install
-npm link       # 加入 k-browser 指令
-```
-
-### 2. 登記到你的 agent,並啟動橋接
-
-請在**真正的終端機**裡執行，不要透過 agent 執行:
+請在**真正的終端機**裡執行，不要透過 agent 執行(npx 第一次會問要不要下載 K-Browser):
 
 ```sh
-k-browser install
+npx k-browser@latest install
 ```
 
-它會做三件事:
+它會做四件事:
+- 把 K-Browser 放到 `~/.k-browser/app`。agent、橋接和 Chrome 都用這一份，所以清掉 npm 的快取也不會壞。
 - 問你要替 agent 封鎖哪些網站類別(用逗號分隔;直接按 Enter 表示都不封鎖)。
 - 替每家 agent 建立自己的 client(各自的 token),寫進它們的 MCP 設定。每個被改的檔案都會留備份,`k-browser restore <backup.json>` 可以還原。
 - 把橋接裝成 LaunchAgent,登入後自動啟動。
@@ -68,43 +60,67 @@ k-browser install
 沒有終端機可以問問題時(例如在 agent 裡執行),必須直接把答案寫在指令上，否則安裝會拒絕執行:
 
 ```sh
-k-browser install --block banking,email     # 封鎖這些類別
-k-browser install --block ""                # 確定都不封鎖
+npx k-browser@latest install --block banking,email     # 封鎖這些類別
+npx k-browser@latest install --block ""                # 確定都不封鎖
 ```
 
 想先看會改哪些檔案，可以加 `--dry-run`。只裝給一家 agent:`--client claude-code|codex|antigravity|gemini-cli`。
 
-### 3. 把擴充載入 Chrome
+### 2. 把擴充載入 Chrome
 
 1. Chrome 網址列打開 `chrome://extensions`
 2. 打開右上角的「**開發人員模式**」
-3. 按「**載入未封裝項目**」,選這個資料夾裡的 `extension/`(完整路徑可用 `k-browser extension-path` 查)
+3. 按「**載入未封裝項目**」,選 `npx k-browser extension-path` 印出的資料夾(`~/.k-browser/app/node_modules/k-browser/extension`)。在選檔視窗按 Cmd+Shift+G 可以直接輸入路徑;Cmd+Shift+. 可以顯示 `.k-browser` 這類隱藏資料夾。
 
 工具列會出現 K-Browser 的圖示(紅色的 K)。建議把它釘選在工具列上,agent 把分頁交給你時會用到。
 
-### 4. 配對：讓擴充和橋接互相認得
+### 3. 配對：讓擴充和橋接互相認得
 
 配對碼是橋接和擴充之間的共用密鑰。沒有配對碼，橋接不會接受任何擴充連線，別的程式也冒充不了擴充。
 
 ```sh
-k-browser pair
+npx k-browser pair
 ```
 
 畫面會印出配對碼(第一次執行時建立，存在 `~/.k-browser/pair.key`)。點工具列的 K-Browser 圖示，把配對碼貼進「配對碼」欄位，按「**配對**」,狀態變成綠色的「**已連線**」就完成了。
 
 - **配對碼錯了**:狀態變成紅色的「錯誤」,配對欄位會再出現，重新貼正確的碼即可。
-- **想換配對碼**(例如懷疑外洩):`k-browser pair --rotate`。舊碼立刻失效，每個設定檔已連線的擴充都會被斷開;在每個設定檔把新碼貼進擴充即可。已經連線時，按彈出視窗裡的「重新配對…」打開欄位。
+- **想換配對碼**(例如懷疑外洩):`npx k-browser pair --rotate`。舊碼立刻失效，每個設定檔已連線的擴充都會被斷開;在每個設定檔把新碼貼進擴充即可。已經連線時，按彈出視窗裡的「重新配對…」打開欄位。
 - **狀態是「橋接未連線」**:這不是配對的問題，是橋接沒在執行。請執行 `k-browser doctor` 看原因。
 
 **多個 Chrome 設定檔**:在每個要給 agent 用的 Chrome 設定檔(工作、個人…)都載入擴充，貼上**同一組**配對碼;第二個設定檔起，在小視窗裡替它取個名字。之後 agent 用 `tabs {action: "open", profile: "工作"}` 指定在哪個設定檔開分頁(沒指定就用第一個配對的設定檔，或 `k-browser profile default <名稱>` 設定的);`status` 和 `tabs list` 會標出每個分頁在哪個設定檔。每個 agent 都能用所有已配對的設定檔。管理指令：`k-browser profile list | rename | remove | default`。移除的設定檔，要在它的小視窗重新配對才會回來。
 
-### 5. 確認
+### 4. 確認
 
 ```sh
-k-browser doctor
+npx k-browser doctor
 ```
 
 看到 `"ok": true`,而且 `startedBy` 是 `launchd`,就全部就緒。接著**重開你的 agent**(或在 agent 裡重連 k-browser 的 MCP),它就有 K-Browser 的工具可以用了。
+
+### 5. 更新
+
+```sh
+npx k-browser update
+```
+
+有新版時，它會把新版裝進 `~/.k-browser/app`,並重開橋接;agent 會自己跟上。接著在每個 Chrome 設定檔的 `chrome://extensions` 按 K-Browser 的 ↻。不要移除擴充：移除會讓它忘掉配對。
+
+### 從 git clone 安裝
+
+要開發 K-Browser 本身，或之前就是這樣裝的:
+
+```sh
+git clone https://github.com/kaiwutech-TW/k-browser.git K-Browser
+cd K-Browser
+npm install
+npm link       # 加入 k-browser 指令;失敗的話改用 `node src/cli.js`
+k-browser install
+```
+
+Chrome 載入 clone 裡的 `extension/` 資料夾，更新用 `k-browser update`(git pull、`npm ci`、重開橋接)。clone 和 npx 兩種不能同時安裝:`npx k-browser install` 會停下來說明。
+
+**從 git clone 改成 npx**:在 clone 執行 `k-browser uninstall`,再執行 `npx k-browser@latest install`。在每個 Chrome 設定檔的 `chrome://extensions` 按舊 K-Browser 的「**移除**」,用「**載入未封裝項目**」選 `npx k-browser extension-path` 印出的資料夾，貼上 `npx k-browser pair` 的配對碼(同一組，不要換)。重新載入的擴充會被當成新的設定檔;要沿用舊名稱，先執行 `npx k-browser profile remove <舊名稱>`。
 
 ## agent 拿到的工具
 
@@ -121,7 +137,7 @@ k-browser doctor
 | `files` | agent 自己的檔案區：下載進來、從這裡上傳到檔案欄位。 |
 | `webmcp` | 網站自己提供的工具(WebMCP,`document.modelContext`):列出並呼叫。網站標為「有後果」(付款、送出)的工具，要你先在 K-Browser 側欄按**允許**。需要在 Chrome 開啟 WebMCP。 |
 | `screenshot` | 可見頁面或某個元素的 PNG,不會存檔。可以對個別 client 關掉。 |
-| `needs_human` | 把分頁交給你(登入、驗證碼、決定)並等你交還。 |
+| `needs_human` | 把分頁交給你(登入、驗證碼、決定)。agent 在同一輪裡等，你在 K-Browser 小視窗按「**交還**」它就接著做，不用回對話說。如果 agent 中途停了(例如你中斷它),再跟它說一聲做完了。 |
 | `learnings` | 存在本機的網站筆記(API、障礙、陷阱、技巧)。筆記只是資訊，不是指令。 |
 | `status` | 版本、agent 的分頁和交接、哪些工具有開。 |
 | `eval` | 在隔離環境執行 JavaScript 運算式。**預設關閉。** |
@@ -129,10 +145,12 @@ k-browser doctor
 
 ## 平常會用到的
 
+用 npx 安裝的話，表裡的 `k-browser` 改打 `npx k-browser`。
+
 | 要做什麼 | 指令 |
 |---|---|
 | 檢查一切是否正常 | `k-browser doctor` |
-| 更新 K-Browser | `k-browser update`(git pull、`npm ci`、重開橋接),接著在每個 Chrome 設定檔的 `chrome://extensions` 按 K-Browser 的 ↻(不要移除) |
+| 更新 K-Browser | `k-browser update`(npx 安裝：裝最新版;git clone:git pull、`npm ci`;兩種都會重開橋接),接著在每個 Chrome 設定檔的 `chrome://extensions` 按 K-Browser 的 ↻(不要移除) |
 | 重開橋接 | `k-browser service restart` |
 | 列出 / 新增 / 移除 client | `k-browser client list`、`client add <名稱>`、`client remove <名稱>` |
 | 讓某個 client 可以用 `eval` | `k-browser client set <名稱> --eval on`(下一次呼叫起生效) |
@@ -187,7 +205,7 @@ Kav 也可以自己接 K-Browser:先 `k-browser client add kav`,再把 `KFW_CDP`
 
 - **橋接重開後,agent 說找不到之前的分頁**:這是刻意的。K-Browser 寧可放掉舊分頁，也不靠猜測認回來，免得把無關的分頁當成 agent 的。之前開的分頁請手動關掉。
 - **agent 回報 `bridge_version`**:橋接和 agent 的 MCP server 版本不一致。橋接比較舊，就 `k-browser service restart`;agent 比較舊，就重開 agent 或重連它的 MCP。0.5.0 起,agent 的 MCP 會自己跟上新版(橋接 `k-browser service restart` 之後);0.5.0 之前就啟動的 agent 要重連一次。
-- **`chrome://extensions` 顯示的還是舊版本**:Chrome 從你「載入未封裝項目」時選的資料夾執行擴充，檔案改了也不會自己重新載入。`git pull` 或 `k-browser update` 之後，要在每個 Chrome 設定檔的 `chrome://extensions` 按 K-Browser 的 ↻。如果還是舊版本，看 K-Browser 卡片上的路徑(要開「開發人員模式」):它必須是 `k-browser extension-path` 印出的資料夾。如果是另一份(例如更早 clone 的),按「**移除**」,再用「**載入未封裝項目**」選對的資料夾，重新配對。
+- **`chrome://extensions` 顯示的還是舊版本**:Chrome 從你「載入未封裝項目」時選的資料夾執行擴充，檔案改了也不會自己重新載入。`k-browser update`(或 `git pull`)之後，要在每個 Chrome 設定檔的 `chrome://extensions` 按 K-Browser 的 ↻。如果還是舊版本，看 K-Browser 卡片上的路徑(要開「開發人員模式」):它必須是 `k-browser extension-path` 印出的資料夾。如果是另一份(例如更早 clone 的，或 npx 快取裡的),按「**移除**」,再用「**載入未封裝項目**」選對的資料夾，重新配對。
 - **Chrome 上方出現「正在偵錯此瀏覽器」**:這是 Chrome 對擴充使用偵錯介面的固定提示，網頁本身看不到。
 - **其他狀況**:`k-browser doctor` 會回報橋接、配對和擴充的狀態，以及下一步該做什麼。
 
@@ -205,7 +223,7 @@ Kav 也可以自己接 K-Browser:先 `k-browser client add kav`,再把 `KFW_CDP`
 npm test              # 單元測試
 npm run typecheck     # 對 src/、extension/、test/ 做 tsc --checkJs
 npm run test:chrome   # 在 Chrome for Testing 裡用真的擴充跑端到端測試
-npm run test:pack     # npm pack 後裝到別處，跑裝出來的那份
+npm run test:pack     # npm pack 後裝到別處、也經過 npx 安裝，跑裝出來的那份
 ```
 
 - `test:chrome` 需要 Chrome for Testing(品牌版 Chrome 已經不能從命令列載入未封裝擴充):把 `KBROWSER_TEST_CHROME` 設成它的執行檔，或執行 `npx playwright install chromium`,會用 Playwright 快取裡最新的那份(Apple Silicon)。沒有的話這些測試會略過。想看畫面就設 `KBROWSER_TEST_HEADED=1`。

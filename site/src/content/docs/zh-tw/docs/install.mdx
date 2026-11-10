@@ -1,60 +1,51 @@
 ---
 title: 安裝
-description: 安裝橋接、登記你的 agent、載入擴充並配對。
+description: 用 npx 安裝、登記你的 agent、載入擴充並配對。
 ---
 
 import { Aside, Steps } from '@astrojs/starlight/components';
 
 **需求**:macOS · Google Chrome 125 以上 · Node.js 22 以上(`node -v` 確認)。
 
-第 1 步最後的 `npm link` 會加入下面用到的 `k-browser` 指令。如果它失敗(沒有 npm 全域資料夾的寫入權限),下面寫 `k-browser` 的地方，改成在 K-Browser 資料夾裡執行 `node src/cli.js`。
+全部透過 `npx` 執行，不需要 npm 全域資料夾的寫入權限。`npx k-browser <指令>` 會交給第 1 步裝好的 K-Browser 執行。
 
 <Steps>
 
-1. **取得程式**
+1. **安裝、登記到你的 agent,並啟動橋接**
+
+   請在真正的終端機裡執行，不要透過 agent 執行(npx 第一次會問要不要下載 K-Browser):
 
    ```sh
-   git clone https://github.com/kaiwutech-TW/k-browser.git K-Browser
-   cd K-Browser
-   npm install
-   npm link       # 加入 k-browser 指令
+   npx k-browser@latest install
    ```
 
-2. **登記到你的 agent,並啟動橋接**
-
-   請在真正的終端機裡執行，不要透過 agent 執行:
-
-   ```sh
-   k-browser install
-   ```
-
-   它會問你要替 agent 封鎖哪些[網站類別](/zh-tw/docs/safety/#封鎖網站類別)(用逗號分隔;直接按 Enter 表示都不封鎖),替每家 agent 建立自己的 client 和 token 並寫進它的 MCP 設定，再把橋接裝成 LaunchAgent,登入後自動啟動。每個被改的檔案都會先備份,`k-browser restore <backup.json>` 可以還原。
+   它會把 K-Browser 放到 `~/.k-browser/app`(agent、橋接和 Chrome 都用這一份，清掉 npm 的快取也不會壞),問你要替 agent 封鎖哪些[網站類別](/zh-tw/docs/safety/#封鎖網站類別)(用逗號分隔;直接按 Enter 表示都不封鎖),替每家 agent 建立自己的 client 和 token 並寫進它的 MCP 設定，再把橋接裝成 LaunchAgent,登入後自動啟動。每個被改的檔案都會先備份,`npx k-browser restore <backup.json>` 可以還原。
 
    沒有終端機可以問問題時，必須直接把答案寫在指令上，否則安裝會拒絕執行:
 
    ```sh
-   k-browser install --block banking,email     # 封鎖這些類別
-   k-browser install --block ""                # 確定都不封鎖
+   npx k-browser@latest install --block banking,email     # 封鎖這些類別
+   npx k-browser@latest install --block ""                # 確定都不封鎖
    ```
 
    `--dry-run` 會列出會改哪些檔案;`--client claude-code|codex|antigravity|gemini-cli` 只裝給一家 agent。
 
-3. **把擴充載入 Chrome**
+2. **把擴充載入 Chrome**
 
-   打開 `chrome://extensions`,開啟右上角的「**開發人員模式**」,按「**載入未封裝項目**」,選 `extension/` 資料夾(完整路徑可用 `k-browser extension-path` 查)。把紅色的 **K** 釘選在工具列上,agent 把分頁交給你時會用到。
+   打開 `chrome://extensions`,開啟右上角的「**開發人員模式**」,按「**載入未封裝項目**」,選 `npx k-browser extension-path` 印出的資料夾(`~/.k-browser/app/node_modules/k-browser/extension`;在選檔視窗按 Cmd+Shift+G 可以直接輸入路徑)。把紅色的 **K** 釘選在工具列上,agent 把分頁交給你時會用到。
 
-4. **配對擴充和橋接**
+3. **配對擴充和橋接**
 
    ```sh
-   k-browser pair
+   npx k-browser pair
    ```
 
    把配對碼貼進 K-Browser 彈出視窗，按「**配對**」,狀態變成綠色的「**已連線**」。
 
-5. **確認**
+4. **確認**
 
    ```sh
-   k-browser doctor
+   npx k-browser doctor
    ```
 
    看到 `"ok": true`,而且 `startedBy` 是 `launchd`,就全部就緒。重開你的 agent(或重連它的 `k-browser` MCP),它就有 K-Browser 的工具了。
@@ -62,13 +53,29 @@ import { Aside, Steps } from '@astrojs/starlight/components';
 </Steps>
 
 <Aside type="note" title="關於配對碼">
-配對碼是橋接和擴充之間的共用密鑰。沒有它，橋接不接受任何擴充，別的程式也冒充不了擴充。`k-browser pair --rotate` 會換一個新的，舊的立刻失效。「橋接未連線」不是配對的問題，是橋接沒在執行;請看 `k-browser doctor`。
+配對碼是橋接和擴充之間的共用密鑰。沒有它，橋接不接受任何擴充，別的程式也冒充不了擴充。`npx k-browser pair --rotate` 會換一個新的，舊的立刻失效。「橋接未連線」不是配對的問題，是橋接沒在執行;請看 `npx k-browser doctor`。
 </Aside>
 
 ## 更新
 
 ```sh
-k-browser update
+npx k-browser update
 ```
 
-它會抓新的程式(`git pull --ff-only`)、安裝套件(`npm ci`)、重開橋接。接著在每個有裝 K-Browser 的 Chrome 設定檔，到 `chrome://extensions` 按 K-Browser 的 ↻:Chrome 不讓程式重新載入未封裝的擴充。agent 會自己跟上。資料夾裡的檔案有本機修改時，它什麼都不改就停下。如果你是下載 zip 而不是 clone,請下載新的版本、整個資料夾換掉。
+有新版時，它會把新版裝進 `~/.k-browser/app`,並重開橋接。接著在每個有裝 K-Browser 的 Chrome 設定檔，到 `chrome://extensions` 按 K-Browser 的 ↻:Chrome 不讓程式重新載入未封裝的擴充。不要移除擴充：移除會讓它忘掉配對。agent 會自己跟上。
+
+## 從 git clone 安裝
+
+要開發 K-Browser 本身，或之前就是這樣裝的:
+
+```sh
+git clone https://github.com/kaiwutech-TW/k-browser.git K-Browser
+cd K-Browser
+npm install
+npm link       # 加入 k-browser 指令;失敗的話改用 `node src/cli.js`
+k-browser install
+```
+
+Chrome 載入 clone 裡的 `extension/` 資料夾。之後 `k-browser update` 會抓新的程式(`git pull --ff-only`)、安裝套件(`npm ci`)、重開橋接;資料夾裡的檔案有本機修改時，它什麼都不改就停下。clone 和 npx 兩種不能同時安裝:`npx k-browser install` 會停下來說明。
+
+**從 git clone 改成 npx**:在 clone 執行 `k-browser uninstall`,再執行 `npx k-browser@latest install`。在每個 Chrome 設定檔的 `chrome://extensions` 按舊 K-Browser 的「**移除**」,用「**載入未封裝項目**」選 `npx k-browser extension-path` 印出的資料夾，貼上 `npx k-browser pair` 的配對碼(同一組，不要換)。重新載入的擴充會被當成新的設定檔;要沿用舊名稱，先執行 `npx k-browser profile remove <舊名稱>`。

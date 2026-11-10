@@ -159,7 +159,7 @@ test('an MCP server whose client was revoked stays up: status answers unknown_cl
 
 test('the extension and the package carry the same version: doctor and the MCP server compare against it', () => {
   const manifest = JSON.parse(fs.readFileSync(new URL('../extension/manifest.json', import.meta.url), 'utf8'));
-  const lock = JSON.parse(fs.readFileSync(new URL('../package-lock.json', import.meta.url), 'utf8'));
+  const lock = JSON.parse(fs.readFileSync(new URL('../npm-shrinkwrap.json', import.meta.url), 'utf8'));
   assert.equal(manifest.version, VERSION);
   assert.deepEqual([lock.version, lock.packages[''].version], [VERSION, VERSION]);
 });

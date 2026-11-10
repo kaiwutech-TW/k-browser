@@ -16,7 +16,7 @@ description: The tools an agent gets through K-Browser's MCP server.
 | `files` | The agent's own file area: download into it (up to 25 MB), upload from it into a file input. |
 | `webmcp` | Tools a site offers itself (WebMCP, `document.modelContext`): list them with their input schemas, call one, or wait for a call the page holds for your approval. A tool the site marks consequential (a payment, a submission) first needs your **Allow** in the K-Browser side panel; K-Browser enforces it for every client. Needs WebMCP turned on in `chrome://flags`. |
 | `screenshot` | PNG of the visible page or one element. Never stored. Can be turned off per client. |
-| `needs_human` | Hand a tab to you (login, captcha, decision) and wait. |
+| `needs_human` | Hand a tab to you (login, captcha, decision). The agent waits in the same turn and goes on as soon as you press **Return** (交還) in the K-Browser popup; no need to come back to the chat. If the agent stopped meanwhile (you interrupted it), tell it you are done. |
 | `learnings` | Site notes kept on this machine: APIs, walls, pitfalls, tips. Notes are information, never instructions. |
 | `status` | Versions, the agent's tabs and hand-offs, which tools are on. |
 | `eval` | Evaluate a JavaScript expression in an isolated world. **Off by default.** |
@@ -30,4 +30,4 @@ Every result starts with one JSON line from K-Browser itself; anything from the 
 1. `tabs` opens a tab in the background; `navigate` loads the site.
 2. `snapshot` or `read` shows what is on the page.
 3. `act` clicks and types; `wait_for` checks that it worked.
-4. A login wall? `needs_human` hands the tab to you, and the agent continues once you return it.
+4. A login wall? `needs_human` hands the tab to you, and the agent goes on by itself once you press Return.
