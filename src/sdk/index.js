@@ -393,9 +393,14 @@ export class Tab {
     return this.#labelled(`double-click ${this.#what(ref)}`, () => act.dblclick(this, ref, o));
   }
 
-  /** Click a field and type into it. @param {string} ref @param {string} text @param {act.ActOptions & { replace?: boolean }} [o] */
+  /** Click a field and type into it (whole: each line at once). @param {string} ref @param {string} text @param {act.ActOptions & { replace?: boolean, whole?: boolean }} [o] */
   type(ref, text, o) {
     return this.#labelled(`type into ${this.#what(ref)} (${[...String(text)].length} chars)`, () => act.type(this, ref, text, o));
+  }
+
+  /** Click a field and drop a whole text into it at once (no clipboard). @param {string} ref @param {string} text @param {act.ActOptions & { replace?: boolean }} [o] */
+  drop(ref, text, o) {
+    return this.#labelled(`drop text into ${this.#what(ref)} (${[...String(text)].length} chars)`, () => act.drop(this, ref, text, o));
   }
 
   /** Press a key or combination on whatever has focus. @param {string} combo @param {{ fast?: boolean }} [o] */

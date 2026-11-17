@@ -3,7 +3,8 @@
 // Chrome's experimental CDP WebMCP domain (no script runs in the page's main world).
 //
 // Measured in Chrome for Testing 156: the domain exists only with the WebMCP feature on (chrome://flags, or
-// --enable-features=WebMCPTesting,DevToolsWebMCPSupport); without it WebMCP.enable succeeds and reports nothing.
+// --enable-features=WebMCPTesting,DevToolsWebMCPSupport; Chrome for Testing 159 renamed the feature to WebMCP);
+// without it WebMCP.enable succeeds and reports nothing.
 // WebMCP.enable replays toolsAdded for the tools already registered. invokeTool answers an invocationId at once;
 // the result comes later as toolResponded (Completed / Canceled / Error). A tool that waits for a person (an
 // approval card on the page) simply has not responded yet.

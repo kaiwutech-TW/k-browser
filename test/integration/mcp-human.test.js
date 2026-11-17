@@ -364,3 +364,24 @@ test('needs_human: cancelled, expired, invalidated (the user closed the tab); ba
   assert.equal((await m.call('needs_human', { handoff: 'h999', action: 'status' })).head.state, 'invalidated');
   await m.call('tabs', { action: 'close', tab: t2 });
 });
+
+test('act drop through MCP: a whole text goes in at once, the result says so without repeating the text; the key Meta+V alone says it pasted nothing', { skip }, async () => {
+  const tab = await openTab(site.A('/long-input'));
+  const field = await ref(tab, /textbox "long field"/);
+  const TEXT = '整段 dropped https://example.com.tw/x?y=1 完';
+  const r = await m.call('act', { tab, steps: [{ do: 'drop', ref: field, text: TEXT }, { do: 'key', key: 'Meta+v' }] });
+  assert.equal(r.isError, false, r.text);
+  assert.deepEqual([r.head.done, r.head.of], [2, 2]);
+  for (const part of [/"action":\s*"drop"/, new RegExp(`"dropped":\\s*${[...TEXT].length}\\b`), /"changed":\s*true/, /"exact":\s*true/]) assert.match(r.text, part, r.text);
+  assert.match(r.text, /pasted nothing/);
+  assert.ok(!r.text.includes('example.com.tw'), 'the dropped text is not echoed back');
+  assert.equal(((await m.call('read', { tab, ref: field })).page ?? '').includes(TEXT), true);
+  // type with whole: the lines go in at once (here one line, appended)
+  const w = await m.call('act', { tab, steps: [{ do: 'type', ref: field, text: ' 再加一行 https://example.org/whole', whole: true }] });
+  assert.equal(w.isError, false, w.text);
+  assert.match(w.text, /"keys":\s*0\b/, w.text);
+  assert.equal(((await m.call('read', { tab, ref: field })).page ?? '').includes('https://example.org/whole'), true);
+  const missing = await m.call('act', { tab, steps: [{ do: 'drop', text: 'x' }] });
+  assert.equal(missing.head.error, 'bad_argument', missing.text);
+  await m.call('tabs', { action: 'close', tab });
+});

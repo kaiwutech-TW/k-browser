@@ -37,6 +37,20 @@ const autoAttach = (p) => (p.flatten === true ? null : 'Target.setAutoAttach is 
 const invokeTool = (p) => (typeof p.frameId === 'string' && typeof p.toolName === 'string' && p.input && typeof p.input === 'object' && !Array.isArray(p.input)
   ? null : 'WebMCP.invokeTool needs frameId, toolName (strings) and input (an object)');
 
+/** @type {Check} */
+// a piece of plain text dragged onto the page, and nothing else: DragData can also name local files (`files`), which
+// the page could then read and upload, and other formats (HTML, URLs) the SDK has no use for
+const dragText = (p) => {
+  const d = p.data;
+  const plain = d && typeof d === 'object' && !Array.isArray(d) && Object.keys(d).every((k) => k === 'items' || k === 'dragOperationsMask')
+    && Array.isArray(d.items) && d.items.length === 1 && d.items[0] && typeof d.items[0] === 'object'
+    && Object.keys(d.items[0]).every((k) => k === 'mimeType' || k === 'data') && d.items[0].mimeType === 'text/plain' && typeof d.items[0].data === 'string';
+  if (!['dragEnter', 'dragOver', 'drop', 'dragCancel'].includes(p.type) || !plain) {
+    return 'Input.dispatchDragEvent is allowed only for one text/plain item (data: { items: [{ mimeType: "text/plain", data }], dragOperationsMask }): no files, no other formats';
+  }
+  return null;
+};
+
 /** @type {Map<string, Check>} */
 export const ALLOWED = new Map(Object.entries({
   // --- used by Kav (kfw/*.py) ---
@@ -88,6 +102,7 @@ export const ALLOWED = new Map(Object.entries({
   'Accessibility.getFullAXTree': null,
   'Accessibility.getPartialAXTree': null,
   'DOMSnapshot.captureSnapshot': null,
+  'Input.dispatchDragEvent': dragText, // a text dropped into a field at once (src/sdk/input.js drop): plain text only
   'Emulation.clearDeviceMetricsOverride': null,
   'Network.disable': null,
   'Network.getResponseBody': null,

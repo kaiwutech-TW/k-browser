@@ -411,3 +411,98 @@ test('field report 2026-11-09: Chinese <select> labels, date and month fields ty
     await tab.close();
   }
 });
+
+test('drop: a whole text goes into a field at once as one trusted drop of plain text (lines, Chinese, emoji, a URL); no paste event, no clipboard', { skip }, async () => {
+  const tab = await tabAt('/drop');
+  try {
+    const snap = await tab.snapshot();
+    const TEXT = '第一段 hello\n第二段 https://example.com.tw/path?a=1\n\n第四行 😀';
+    const t = Date.now();
+    const r = /** @type {any} */ (await tab.drop(refOf(snap, 'area'), TEXT, { replace: true }));
+    const ms = Date.now() - t;
+    assert.deepEqual([r.action, r.dropped, r.changed, r.exact, r.note], ['drop', [...TEXT].length, true, true, undefined]);
+    assert.equal(await tab.evaluate(() => /** @type {HTMLTextAreaElement} */ (document.querySelector('textarea')).value), TEXT, 'replaced the old text, line breaks kept');
+    let m = await marks(tab);
+    assert.deepEqual([m.drops, m.dropTrusted, m.dropText, m.dropTypes, m.dropFiles, m.inputType, m.pasted], ['1', 'true', TEXT, 'text/plain', '0', 'insertFromDrop', undefined]);
+    assert.ok(ms < 5000, `at once, not key by key: ${ms} ms`);
+    assert.equal(await tab.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'area', 'the field keeps the focus: a key (Enter, Tab) can follow');
+
+    // without replace it goes in among what is there; a single-line field shows the line break as a space
+    const line = /** @type {any} */ (await tab.drop(refOf(snap, 'line'), 'one\ntwo'));
+    assert.deepEqual([line.changed, line.exact], [true, true]);
+    assert.equal(await tab.evaluate(() => /** @type {HTMLInputElement} */ (document.querySelector('[aria-label=line]')).value), 'one two');
+    // ...and replace empties it first: the whole value is the text
+    const again = /** @type {any} */ (await tab.drop(refOf(snap, 'line'), 'three', { replace: true }));
+    assert.deepEqual([again.changed, again.exact], [true, true]);
+    assert.equal(await tab.evaluate(() => /** @type {HTMLInputElement} */ (document.querySelector('[aria-label=line]')).value), 'three');
+
+    // an editor: the lines arrive as lines
+    const rich = /** @type {any} */ (await tab.drop(refOf(snap, 'rich'), 'alpha\nbeta 中文'));
+    assert.equal(rich.changed, true);
+    assert.deepEqual(String(await tab.evaluate(() => /** @type {HTMLElement} */ (document.querySelector('[contenteditable]')).innerText)).split(/\n+/), ['alpha', 'beta 中文']);
+    const richAgain = /** @type {any} */ (await tab.drop(refOf(snap, 'rich'), 'gamma', { replace: true }));
+    assert.equal(richAgain.changed, true);
+    assert.equal(String(await tab.evaluate(() => /** @type {HTMLElement} */ (document.querySelector('[contenteditable]')).innerText)).trim(), 'gamma');
+
+    // a field that refuses drops (a page with drop handling of its own): the drop reached it and nothing went in.
+    // Neither done nor "not done": result_unknown, and nothing else is tried
+    await failsWith(() => tab.drop(refOf(snap, 'deaf'), 'no drop'), 'result_unknown');
+    m = await marks(tab);
+    assert.deepEqual([m.dropText, m.pasted], ['no drop', undefined]);
+    assert.equal(await tab.evaluate(() => /** @type {HTMLInputElement} */ (document.querySelector('[aria-label=deaf]')).value), '');
+    // ...the caller's own choice after reading it: whole lines (type with whole)
+    const whole = await tab.type(refOf(snap, 'deaf'), 'no drop', { whole: true });
+    assert.deepEqual([whole.keys, whole.inserted], [0, 7]);
+    assert.equal(await tab.evaluate(() => /** @type {HTMLInputElement} */ (document.querySelector('[aria-label=deaf]')).value), 'no drop');
+    // an editor that refuses drops (like the Threads composer): each line at once, Enter between them, the URL in one piece
+    await failsWith(() => tab.drop(refOf(snap, 'picky'), 'x'), 'result_unknown');
+    const t2 = Date.now();
+    await tab.type(refOf(snap, 'picky'), '第一行 hello\n\nhttps://example.com.tw/path?a=1', { whole: true });
+    assert.ok(Date.now() - t2 < 5000, 'at once, not key by key');
+    assert.deepEqual(String(await tab.evaluate(() => /** @type {HTMLElement} */ (document.querySelector('[aria-label=picky]')).innerText)).split(/\n+/), ['第一行 hello', 'https://example.com.tw/path?a=1']);
+    await tab.type(refOf(snap, 'picky'), 'replaced', { whole: true, replace: true });
+    assert.equal(String(await tab.evaluate(() => /** @type {HTMLElement} */ (document.querySelector('[aria-label=picky]')).innerText)).trim(), 'replaced');
+    // review round 4: a page that handles the drop a moment later. Reported as unknown, never put in a second way:
+    // the text is there once, not twice
+    await failsWith(() => tab.drop(refOf(snap, 'slow'), 'once'), 'result_unknown');
+    await sleep(600);
+    assert.equal(await tab.evaluate(() => /** @type {HTMLInputElement} */ (document.querySelector('[aria-label=slow]')).value), 'once');
+    // review round 3: with replace the draft is emptied before the drop is refused: the error says so
+    await assert.rejects(tab.drop(refOf(snap, 'stone'), 'nope', { replace: true }), (e) => e instanceof SdkError && e.code === 'result_unknown' && /emptied first and is empty now/.test(e.message));
+    assert.equal(await tab.evaluate(() => /** @type {HTMLInputElement} */ (document.querySelector('[aria-label=stone]')).value), '');
+
+    // the key alone still pastes nothing
+    await tab.click(refOf(snap, 'line'));
+    assert.match(/** @type {any} */ (await tab.key('Meta+v')).note, /pasted nothing/);
+    assert.equal((await marks(tab)).pasted, undefined);
+  } finally {
+    await tab.close();
+  }
+});
+
+test('drop into a field inside a cross-site iframe (an OOPIF): the text lands in that field', { skip }, async () => {
+  const tab = await tabAt('/drop-host');
+  try {
+    const snap = await tab.snapshot();
+    const r = /** @type {any} */ (await tab.drop(refOf(snap, 'inner area'), 'into the frame\n第二行', { replace: true }));
+    assert.deepEqual([r.changed, r.exact, r.crossFrames], [true, true, 1]);
+  } finally {
+    await tab.close();
+  }
+});
+
+test('typing at a person\'s pace in a real page: every character arrives once and in order, Chinese in pieces', { skip }, async () => {
+  const tab = await tabAt('/drop');
+  try {
+    const snap = await tab.snapshot();
+    const text = 'Hello, 今天天氣很好我們去走走 OK? 123';
+    const t = Date.now();
+    const r = await tab.type(refOf(snap, 'line'), text);
+    const ms = Date.now() - t;
+    assert.equal(await tab.evaluate(() => /** @type {HTMLInputElement} */ (document.querySelector('[aria-label=line]')).value), text);
+    assert.deepEqual([r.keys, r.inserted], [15, 11]);
+    assert.ok(ms > 2500 && ms < 20000, `took ${ms} ms`);
+  } finally {
+    await tab.close();
+  }
+});

@@ -176,7 +176,7 @@ async function tabInfo(tab) {
 // Commands that need the page rendered: a minimized window's pages take no input and give no screenshot
 // (measured in a headed Chrome). Checked on the tab's ACTUAL window: a popup may have opened its own window,
 // or the user may have dragged the tab out.
-const NEEDS_RENDERING = new Set(['Page.captureScreenshot', 'Input.dispatchMouseEvent', 'Input.dispatchKeyEvent', 'Input.insertText']);
+const NEEDS_RENDERING = new Set(['Page.captureScreenshot', 'Input.dispatchMouseEvent', 'Input.dispatchKeyEvent', 'Input.insertText', 'Input.dispatchDragEvent']);
 
 // On macOS the restored window comes back on top of every window, but the keyboard stays with the user's app
 // (measured; accepted: the user minimized it, it pops up once, the agent never stalls).

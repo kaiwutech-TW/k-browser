@@ -23,6 +23,10 @@ Clicks and typing go through Chrome's input pipeline, like a person's. Right bef
 target is still the element the agent meant. If the page moved underneath, it stops instead of clicking something else,
 and says how far it got.
 
+Typing keeps a person's pace: uneven, with pauses where a person pauses. A long text goes into a field at once, the way
+text dragged in from another window arrives. K-Browser never reads or changes your clipboard: an agent pressing ⌘V pastes
+nothing.
+
 ## Blocked site categories
 
 At install you choose the categories agents may not use:

@@ -106,7 +106,8 @@ export function parseCombo(combo) {
 
 /** macOS shortcuts and the editing commands a real press runs: CDP key events do not run them by themselves.
  * Keyed by the held modifiers in MODIFIER order and the key's code. Copy, cut and paste are left out on purpose: they would
- * read the user's clipboard into the page (where the agent can read it) or overwrite it. */
+ * read the user's clipboard into the page (where the agent can read it) or overwrite it. A long text goes in at once
+ * as a drop instead (Input.drop), which uses no clipboard at all. */
 const MAC_COMMANDS = new Map(Object.entries({
   'Meta+KeyA': 'selectAll', 'Meta+KeyZ': 'undo', 'Meta+Shift+KeyZ': 'redo',
   'Meta+ArrowLeft': 'moveToBeginningOfLine', 'Meta+ArrowRight': 'moveToEndOfLine',
@@ -124,6 +125,13 @@ export function macCommands(modifiers, k) {
   const held = Object.keys(MODIFIER).filter((m) => modifiers.includes(m));
   const c = MAC_COMMANDS.get([...held, k.code].join('+'));
   return c ? [c] : undefined;
+}
+
+/** 'paste', 'copy' or 'cut' when the combination is the clipboard shortcut of macOS (Meta) or of Windows and Linux
+ * (Control); else null. A key press alone runs none of them (see MAC_COMMANDS). @param {string[]} modifiers @param {KeyDef} k */
+export function clipboardShortcut(modifiers, k) {
+  if (modifiers.length !== 1 || (modifiers[0] !== 'Meta' && modifiers[0] !== 'Control')) return null;
+  return /** @type {const} */ ({ KeyV: 'paste', KeyC: 'copy', KeyX: 'cut' })[/** @type {'KeyV' | 'KeyC' | 'KeyX'} */ (k.code)] ?? null;
 }
 
 /** CDP params for a key event. `commands` are the editing commands a real key press runs (on macOS a shortcut like

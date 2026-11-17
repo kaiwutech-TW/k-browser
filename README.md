@@ -161,7 +161,7 @@ The reloaded extension counts as a new Chrome profile; to give it its old name, 
 | `navigate` | Load a URL in a tab, or reload it. |
 | `snapshot` | The page's accessibility tree, with refs for interactive elements. |
 | `read` | Visible text of the page or one element, or rows matched by a CSS selector. |
-| `act` | Click, type, press keys, select, scroll: real input, re-checked before each step. |
+| `act` | Click, type, drop a whole text in, press keys, select, scroll: real input, re-checked before each step. |
 | `wait_for` | Decide whether an action worked: the screen changed, the site replied, or the business result is confirmed. |
 | `network` | Requests seen in a tab, with response bodies on request; secrets masked, no headers. |
 | `fetch` | GET or HEAD on the tab's own origin with the tab's cookies. |

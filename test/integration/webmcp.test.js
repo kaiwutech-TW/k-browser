@@ -30,7 +30,7 @@ before(async () => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-webmcp-'));
   process.env.KBROWSER_HOME = home;
   site = await fixtures();
-  chrome = await launchChrome({ chrome: /** @type {string} */ (CHROME), features: ['WebMCPTesting', 'DevToolsWebMCPSupport'] });
+  chrome = await launchChrome({ chrome: /** @type {string} */ (CHROME), features: ['WebMCP', 'WebMCPTesting', 'DevToolsWebMCPSupport'] });
   bridge = await startBridge({ port: 0, log: () => {} });
   await chrome.pair(/** @type {string} */ (auth.pairKey({ create: true })), bridge.port);
   assert.ok(await until(() => bridge.relay.ext !== null, 15000), 'the extension connected');

@@ -28,6 +28,8 @@
 //   coordinates.
 
 import { SdkError } from './cdp.js';
+import { droppable } from './input.js';
+import { clipboardShortcut, parseCombo } from './keys.js';
 import { Handle } from './world.js';
 
 /** @typedef {import('./snapshot.js').RefEntry} RefEntry */
@@ -206,6 +208,12 @@ function kbDateKind() {
 /** @this {any} */
 function kbValue() {
   return this.value;
+}
+
+/** @this {any} The text a field holds: its value (an <input>, a <textarea>) or what it shows (an editor) */
+function kbText() {
+  const value = typeof this.value === 'string' && (this.localName === 'input' || this.localName === 'textarea');
+  return { value, multiline: this.localName === 'textarea', text: value ? this.value : String(this.innerText ?? this.textContent ?? '') };
 }
 
 /** @this {any} */
@@ -605,8 +613,10 @@ export function dblclick(tab, ref, o = {}) {
 /**
  * Click the field, then type; before every key the field must still have the keyboard focus. `replace: true`
  * selects all of the field's text first with the platform's select-all shortcut (Meta+A on macOS, Control+A
- * elsewhere), so the typing replaces it.
- * @param {Tab} tab @param {string} ref @param {string} text @param {ActOptions & { replace?: boolean }} [o]
+ * elsewhere), so the typing replaces it. `whole: true` puts each line in at once instead of key by key (as an input
+ * method commits a phrase; Enter between lines, as typing a line break does): for a long text, and for a URL an
+ * editor would link half-way while it is typed.
+ * @param {Tab} tab @param {string} ref @param {string} text @param {ActOptions & { replace?: boolean, whole?: boolean }} [o]
  */
 export function type(tab, ref, text, o = {}) {
   return tab.input.locked(async () => {
@@ -625,28 +635,13 @@ export function type(tab, ref, text, o = {}) {
     // the rest would go nowhere while the next step, a submit, goes on)
     const check = () => assertTypable(tab, ref);
     const guard = guardFor(tab, ref);
-    if (o.replace) {
-      const mac = await tab.onNode(ref, kbIsMac) === true;
-      await tab.input.key(mac ? 'Meta+a' : 'Control+a', { fast, check, guard, commands: ['selectAll'] });
-      const all = await tab.onNode(ref, kbAllSelected);
-      if (all === null && await tab.onNode(ref, kbNoSelection) === true) {
-        // a number or email field has no selection offsets to read: clear it with Backspace (what select-all selected
-        // goes), then prove it is empty. A partial selection would have left something: then the field has changed
-        await sending(tab, () => tab.input.key('Backspace', { fast, check, guard }));
-        const left = await tab.onNode(ref, kbLeftOver);
-        if (left !== null) {
-          throw new SdkError('result_unknown', `${describe(tab.entry(ref))}: select-all and Backspace did not empty the field (it shows ${JSON.stringify(left)}); nothing typed, but the field has changed: read it before trying again`);
-        }
-      } else if (all !== true) {
-        throw new SdkError('unsupported', `${describe(tab.entry(ref))}: ${all === false ? 'select-all did not select the whole field' : 'cannot tell whether select-all selected the whole field'}; nothing typed`);
-      }
-    }
+    if (o.replace) await selectAll(tab, ref, fast, check, guard);
     // a number or email field has no caret position to check, and a page that rewrites it on every key can put the
     // caret back at the start (533 became 330 in a React form): its value is read back, and must be the text when
     // the field was empty before typing
     const opaque = await tab.onNode(ref, kbNoSelection) === true;
     const was = opaque ? await tab.onNode(ref, kbValue) : null;
-    const typed = await sending(tab, () => tab.input.type(text, { fast, check, guard }));
+    const typed = await sending(tab, () => tab.input.type(text, { fast, check, guard, whole: o.whole === true }));
     if (opaque) {
       const value = await tab.onNode(ref, kbValue);
       const same = value === text || (await tab.onNode(ref, kbIsNumber) === true && value !== '' && Number(value) === Number(text));
@@ -657,6 +652,101 @@ export function type(tab, ref, text, o = {}) {
     }
     return { action: 'type', ...r, ...typed,
       ...(typed.inserted ? { note: `${typed.inserted} character(s) were inserted as text (Input.insertText), not typed as keys` } : {}) };
+  });
+}
+
+/**
+ * Select all of a focused field's text with the platform's select-all shortcut, and prove it: what is typed next
+ * replaces it. A field whose selection cannot be read (number, email) is emptied with Backspace instead.
+ * @param {Tab} tab @param {string} ref @param {boolean} fast @param {() => Promise<void>} check @param {() => void} guard
+ * @returns {Promise<'selected' | 'emptied'>}
+ */
+async function selectAll(tab, ref, fast, check, guard) {
+  const mac = await tab.onNode(ref, kbIsMac) === true;
+  await tab.input.key(mac ? 'Meta+a' : 'Control+a', { fast, check, guard, commands: ['selectAll'] });
+  const all = await tab.onNode(ref, kbAllSelected);
+  if (all === null && await tab.onNode(ref, kbNoSelection) === true) {
+    // a number or email field has no selection offsets to read: clear it with Backspace (what select-all selected
+    // goes), then prove it is empty. A partial selection would have left something: then the field has changed
+    await sending(tab, () => tab.input.key('Backspace', { fast, check, guard }));
+    const left = await tab.onNode(ref, kbLeftOver);
+    if (left !== null) {
+      throw new SdkError('result_unknown', `${describe(tab.entry(ref))}: select-all and Backspace did not empty the field (it shows ${JSON.stringify(left)}); nothing typed, but the field has changed: read it before trying again`);
+    }
+    return 'emptied';
+  }
+  if (all !== true) {
+    throw new SdkError('unsupported', `${describe(tab.entry(ref))}: ${all === false ? 'select-all did not select the whole field' : 'cannot tell whether select-all selected the whole field'}; nothing typed`);
+  }
+  return 'selected';
+}
+
+/**
+ * Put a whole text into a field at once: click the field (the same checks as any click; it gets the focus), then
+ * drop the text on it as a piece of text dragged in from another window (one trusted drop; see Input.drop). For long
+ * text, several lines, and URLs an editor would link half-way when typed key by key. No clipboard is involved.
+ * `replace: true` empties the field first (select-all, proven, then Backspace, proven empty): a drop goes in at the
+ * point it lands on, it does not replace a selection. Without replace the text goes in at that point, among what
+ * the field already holds.
+ * A page with drop handling of its own may take no dropped text (measured: the Threads composer), or take it a
+ * moment later. A field whose text is the same right after the drop is therefore neither done nor "not done":
+ * result_unknown, and nothing else is tried here (putting the text in another way on a guess would put it in twice
+ * when the page was only slow). The caller reads the field, and uses type with `whole` if the text is not there.
+ * Before each of the drop's three events the point is checked again as before a press (still this field, nothing
+ * over it). Afterwards the field is read, and the action succeeds only if the text is provably in it: its text
+ * changed, and for a field with a value the value is the text as given (with replace: the whole value; without:
+ * somewhere in it), line breaks as the field keeps them and nothing else forgiven. Anything else is an error, so
+ * that later steps do not run: a field whose text did not change, a value that is not the text, a field the page
+ * replaced (all result_unknown).
+ * @param {Tab} tab @param {string} ref @param {string} text @param {ActOptions & { replace?: boolean }} [o]
+ */
+export function drop(tab, ref, text, o = {}) {
+  return tab.input.locked(async () => {
+    const fast = !!o.fast;
+    droppable(text); // before the click and the emptying: a call that cannot drop changes nothing
+    const e = tab.entry(ref);
+    if (await tab.onNode(ref, kbReadOnly) === true) {
+      throw new SdkError('unsupported', `${describe(e)} is read-only (readonly or disabled): nothing dropped; if a date picker or a button sets it, use that`);
+    }
+    const kind = await tab.onNode(ref, kbDateKind);
+    if (kind) throw new SdkError('unsupported', `${describe(e)} is an <input type=${kind}>: it takes no dropped text; type into it instead; nothing dropped`);
+    const r = await pointAndPress(tab, ref, o, 1);
+    const check = () => assertTypable(tab, ref);
+    await check(); // the click gave it the focus: it is a field that takes text
+    if (o.replace && await selectAll(tab, ref, fast, check, guardFor(tab, ref)) === 'selected') {
+      await sending(tab, () => tab.input.key('Backspace', { fast, check, guard: guardFor(tab, ref) }));
+      const left = await tab.onNode(ref, kbText);
+      // empty means empty: a value of "", or an editor showing nothing (its one empty line reads as a line break).
+      // White space left behind would stay in front of the text
+      if (!left || !(left.value ? left.text === '' : /^\n?$/.test(left.text))) {
+        throw new SdkError('result_unknown', `${describe(e)}: select-all and Backspace did not empty the field (it shows ${JSON.stringify(String(left?.text ?? '').slice(0, 80))}); `
+          + 'nothing dropped, but the field has changed: read it before trying again');
+      }
+    }
+    const was = await tab.onNode(ref, kbText);
+    const loc = await locate(tab, e);
+    const done = await sending(tab, () => tab.input.drop(text, loc.main, { fast, guard: guardFor(tab, ref, loc.boundaries), before: () => verify(tab, ref, loc, o) }));
+    // the drop went in: an editor that rebuilt the field afterwards is not a failure of the drop
+    const now = await tab.onNode(ref, kbText).catch(() => null);
+    const changed = !was || !now ? null : was.text !== now.text;
+    // what the field makes of the text: a textarea keeps line breaks (as \n), a single-line field shows each as a space
+    const lines = text.replace(/\r\n?/g, '\n');
+    const expected = now?.multiline ? lines : lines.replace(/\n/g, ' ');
+    const exact = now?.value ? (o.replace ? now.text === expected : now.text.includes(expected)) : null;
+    // Not provably in the field: an error, so that the steps after it (a Save, a Post) do not run on a field that is
+    // empty or holds something else. A note would be read only after they ran.
+    const emptied = o.replace ? ' The field was emptied first and is empty now: what it held is gone.' : '';
+    if (!now) {
+      throw new SdkError('result_unknown', `dropped the text on ${describe(e)}, but the page replaced the field right after, so what it holds now is not known: take a new snapshot and read it before going on`);
+    }
+    if (changed === false) {
+      throw new SdkError('result_unknown', `dropped the text on ${describe(e)}, but its text is the same as before the drop: the page takes no dropped text here, or handles it a moment later.${emptied} `
+        + 'Read the field again first; only if the text is not there, put it in with type and whole: true (each line at once)');
+    }
+    if (exact === false) {
+      throw new SdkError('result_unknown', `dropped the text on ${describe(e)}, but the field does not hold it as given (the page or the field changed it, or cut it): read the field before going on`);
+    }
+    return { action: 'drop', ...r, dropped: done.dropped, ...(changed === null ? {} : { changed }), ...(exact === null ? {} : { exact }) };
   });
 }
 
@@ -744,13 +834,19 @@ async function dateParts(tab, e, kind) {
  * @param {Tab} tab @param {string} combo @param {{ fast?: boolean }} [o] */
 export function key(tab, combo, o = {}) {
   return tab.input.locked(async () => {
+    /** @type {ReturnType<typeof clipboardShortcut>} */ let clip = null;
     try {
+      const parsed = parseCombo(combo);
+      clip = clipboardShortcut(parsed.modifiers, parsed.key);
       await sending(tab, () => tab.input.key(combo, o));
     } catch (e) {
       if (e instanceof SdkError) throw e;
       throw new SdkError('bad_argument', e instanceof Error ? e.message : String(e));
     }
-    return { action: 'key', key: combo };
+    // the page got the key, but nothing was pasted, copied or cut: an agent must not take it for done
+    const note = clip === 'paste' ? 'the key was pressed, but it pasted nothing (the user\'s clipboard is kept out of pages): to put a whole text in at once, use drop with the text'
+      : clip ? `the key was pressed, but it did not ${clip} anything (the user's clipboard is left alone): read the text with read instead` : null;
+    return { action: 'key', key: combo, ...(note ? { note } : {}) };
   });
 }
 

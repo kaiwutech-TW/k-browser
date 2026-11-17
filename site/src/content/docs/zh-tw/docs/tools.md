@@ -9,7 +9,7 @@ description: agent 透過 K-Browser 的 MCP server 拿到的工具。
 | `navigate` | 在分頁載入網址，或重新整理。回傳動作 id,給 `wait_for` 和 `network` 用。 |
 | `snapshot` | 頁面的無障礙樹，可互動的元素有 ref。 |
 | `read` | 整頁或某個元素的可見文字，或用 CSS selector 抓出一列列資料。密碼欄位永遠不讀。 |
-| `act` | 點擊、打字、按鍵、選擇、捲動：真的輸入，每一步按之前再確認。 |
+| `act` | 點擊、打字、整段放入文字、按鍵、選擇、捲動：真的輸入，每一步按之前再確認。 |
 | `wait_for` | 判斷動作成功沒：畫面變了、網站回應了，或業務結果確認了。 |
 | `network` | 分頁裡的請求，可以要回應內容。秘密會遮掉，不給 header。 |
 | `fetch` | 用分頁的 cookie,對分頁自己的網域做 GET 或 HEAD。跨網域和轉址會被拒絕。 |

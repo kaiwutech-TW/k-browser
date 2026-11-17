@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import { SdkError } from '../src/sdk/cdp.js';
 import { Input } from '../src/sdk/input.js';
 import { keyEvent, keyForChar, parseCombo } from '../src/sdk/keys.js';
+import { pieceSize, typingPlan } from '../src/sdk/rhythm.js';
 import { axDoc, MAIN, open, refOf, rejectsWith, tick, Wire } from './wire.js';
 
 /** @param {[number, number, number, number]} box x, y, w, h */
@@ -37,6 +38,8 @@ function actWire({ nodes = { 7: { box: [100, 100, 80, 30], role: 'button', name:
     allSelected: true,
     readOnly: false,
     mac: true,
+    /** what kbText reads: the field's text, whether it is a value, whether it keeps line breaks @type {{ value: boolean, text: string, multiline?: boolean }} */
+    text: { value: true, text: '' },
     /** @type {string[]} */ transform: [],
     viewport: [300, 150],
   };
@@ -58,7 +61,7 @@ function actWire({ nodes = { 7: { box: [100, 100, 80, 30], role: 'button', name:
   });
   w.on('Runtime.callFunctionOn', (p) => {
     const f = String(p.functionDeclaration);
-    const value = f.includes('kbConnected') ? page.connected : f.includes('kbWithin') ? page.within : f.includes('kbContextHas') ? page.context
+    const value = f.includes('kbText') ? { ...page.text } : f.includes('kbConnected') ? page.connected : f.includes('kbWithin') ? page.within : f.includes('kbContextHas') ? page.context
       : f.includes('kbTransformProblems') ? page.transform : f.includes('kbFocused') ? page.focused
         : f.includes('kbAllSelected') ? page.allSelected : f.includes('kbReadOnly') ? page.readOnly : f.includes('kbIsMac') ? page.mac
           : f.includes('kbDateKind') ? null : f.includes('kbNoSelection') ? false : true;
@@ -642,4 +645,241 @@ test('C: replace into a field whose selection cannot be checked is refused, not 
   page.allSelected = /** @type {any} */ (null);
   await rejectsWith(async () => tab.type(refOf(tab, await tab.snapshot(), 'go'), 'new', { fast: true, replace: true }), 'unsupported');
   assert.equal(w.sent.filter((m) => m.params.code === 'KeyN').length, 0, 'nothing typed');
+});
+
+// ---------- the rhythm of typing ----------
+
+/** A repeatable random source (mulberry32). @param {number} seed */
+function seeded(seed) {
+  let a = seed;
+  return () => {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** @param {string} text */
+const keyUnits = (text) => [...text].map((ch) => ({ ch, ...(keyForChar(ch)?.shift ? { shift: true } : {}) }));
+
+test('rhythm: the pace is uneven, differs from one text to the next, and a breath follows a comma or a full stop', () => {
+  const text = 'the quick brown fox jumps over the lazy dog, then it stops. and goes on again';
+  const plan = typingPlan(keyUnits(text), seeded(1));
+  assert.equal(plan.gaps.length, [...text].length);
+  const mean = plan.gaps.reduce((a, b) => a + b, 0) / plan.gaps.length;
+  const sd = Math.sqrt(plan.gaps.reduce((a, b) => a + (b - mean) ** 2, 0) / plan.gaps.length);
+  assert.ok(sd / mean > 0.45, `gaps vary widely (sd/mean ${(sd / mean).toFixed(2)})`);
+  assert.ok(new Set(plan.gaps).size > plan.gaps.length / 2, 'hardly any two gaps are the same');
+  assert.ok(Math.min(...plan.gaps) >= 20 && Math.max(...plan.gaps) < 2500, 'no instant key, no endless pause');
+  assert.ok(Math.min(...plan.holds) >= 25 && new Set(plan.holds).size > 10, 'keys are held for different times');
+  // over many texts: the gap after a comma or a full stop is clearly longer than after a letter inside a word
+  let breath = 0; let breaths = 0; let inner = 0; let inners = 0;
+  const totals = [];
+  for (let seed = 2; seed < 40; seed++) {
+    const p = typingPlan(keyUnits(text), seeded(seed));
+    totals.push(p.total);
+    [...text].forEach((ch, i) => {
+      if (ch === ',' || ch === '.') { breath += p.gaps[i]; breaths++; } else if (i > 0 && /[a-z]/.test(ch) && /[a-z]/.test(text[i - 1])) { inner += p.gaps[i]; inners++; }
+    });
+  }
+  assert.ok(breath / breaths > 3 * (inner / inners), `a breath (${Math.round(breath / breaths)} ms) against a letter in a word (${Math.round(inner / inners)} ms)`);
+  assert.ok(Math.max(...totals) > 1.3 * Math.min(...totals), 'the same text takes different times (a tempo of its own each time)');
+});
+
+test('rhythm: text that is not on the keyboard comes in pieces of 1 to 4 characters, each after the time it took to compose', () => {
+  const sizes = new Set();
+  const rand = seeded(7);
+  for (let i = 0; i < 200; i++) sizes.add(pieceSize(rand, 10));
+  assert.deepEqual([...sizes].sort(), [1, 2, 3, 4]);
+  assert.equal(pieceSize(() => 0.99, 2), 2, 'never more than what is left');
+  const p = typingPlan([{ text: '你' }, { text: '今天好嗎' }], seeded(3));
+  assert.deepEqual(p.holds, [0, 0]);
+  assert.ok(p.gaps[0] >= 100 && p.gaps[1] > 400, `one character ${p.gaps[0]} ms, four ${p.gaps[1]} ms`);
+});
+
+test('rhythm: a text too long for the budget is sped up evenly to fit; a <select> label is typed with no gap near its 1 s memory', () => {
+  const long = keyUnits('lorem ipsum dolor sit amet, '.repeat(40));
+  const p = typingPlan(long, seeded(5), { budget: 20_000 });
+  assert.ok(p.total <= 20_000 && p.total > 19_000, `total ${p.total}`);
+  assert.ok(new Set(p.gaps).size > 20, 'still uneven');
+  const free = typingPlan(long, seeded(5), { budget: Infinity });
+  assert.ok(free.total > 60_000, 'it would have taken over a minute');
+  for (let seed = 0; seed < 30; seed++) {
+    const steady = typingPlan(keyUnits('Banana split, please. Now!'), seeded(seed), { steady: true });
+    assert.ok(Math.max(...steady.gaps) <= 220, `steady: ${Math.max(...steady.gaps)} ms`);
+  }
+});
+
+test('typing at a person\'s pace: the planned holds and gaps are what is slept; Chinese goes in piece by piece, every character once', async () => {
+  const w = new Wire();
+  w.on('Input.dispatchKeyEvent', () => ({}));
+  w.on('Input.insertText', () => ({}));
+  /** @type {number[]} */ const slept = [];
+  const input = new Input(w.client, 'S', { rand: seeded(11), sleep: async (ms) => { slept.push(ms); } });
+  const text = 'Hi, 今天天氣很好我們去公園走走吧 ok';
+  const r = await input.type(text);
+  const pieces = w.sent.filter((m) => m.method === 'Input.insertText').map((m) => String(m.params.text));
+  assert.equal(pieces.join(''), '今天天氣很好我們去公園走走吧');
+  assert.ok(pieces.length >= 4 && pieces.every((x) => [...x].length >= 1 && [...x].length <= 4), `pieces: ${pieces.join('|')}`);
+  assert.ok(new Set(pieces.map((x) => [...x].length)).size > 1, 'not all pieces the same size');
+  assert.deepEqual(r, { keys: 7, inserted: 14 });
+  // 7 keys: a hold and a gap each; every piece: a gap
+  assert.equal(slept.length, 7 * 2 + pieces.length);
+  assert.ok(new Set(slept).size > slept.length / 2, 'uneven');
+});
+
+// ---------- whole lines, and drop: a long text at once ----------
+
+test('type with whole into a ref: one click, then each line at once with Enter between them, the focus checked before each', async () => {
+  const { w, page } = actWire({ nodes: { 7: { box: [100, 100, 200, 30], role: 'textbox', name: 'go' } } });
+  const tab = await ready(w);
+  const ref = refOf(tab, await tab.snapshot(), 'go');
+  const r = /** @type {any} */ (await tab.type(ref, '第一行 https://example.com.tw/x\n\nline 3', { fast: true, whole: true }));
+  assert.deepEqual([r.action, r.keys, r.inserted], ['type', 2, 34]);
+  assert.match(r.note, /inserted as text/);
+  const seq = w.sent.filter((m) => m.method === 'Input.insertText' || (m.method === 'Input.dispatchKeyEvent' && m.params.type !== 'keyUp'))
+    .map((m) => (m.method === 'Input.insertText' ? `insert:${m.params.text}` : `key:${m.params.code}`));
+  assert.deepEqual(seq, ['insert:第一行 https://example.com.tw/x', 'key:Enter', 'key:Enter', 'insert:line 3']);
+  assert.equal(mouse(w, 'mousePressed').length, 1);
+  // the focus moves away after the first line: the rest does not go in, and it is not a plain "not done"
+  w.on('Input.insertText', () => { page.focused = false; return {}; });
+  await rejectsWith(() => tab.type(ref, 'a\nb', { fast: true, whole: true }), 'result_unknown');
+});
+
+test('typing whole lines: each line goes in at once, Enter between lines, nothing else as keys; the pauses do not grow with the text', async () => {
+  const w = new Wire();
+  w.on('Input.dispatchKeyEvent', () => ({}));
+  w.on('Input.insertText', () => ({}));
+  /** @type {number[]} */ const slept = [];
+  const input = new Input(w.client, 'S', { sleep: async (ms) => { slept.push(ms); } });
+  const long = 'x'.repeat(5000);
+  const r = await input.type(`Hello, 世界\tTab stays text\n\n${long}`, { whole: true });
+  const seq = w.sent.filter((m) => m.method === 'Input.insertText' || m.params.type !== 'keyUp').map((m) => (m.method === 'Input.insertText' ? `insert:${String(m.params.text).length}` : `key:${m.params.code}`));
+  assert.deepEqual(seq, ['insert:24', 'key:Enter', 'key:Enter', `insert:${long.length}`]);
+  assert.deepEqual(r, { keys: 2, inserted: 24 + long.length });
+  assert.ok(slept.reduce((a, b) => a + b, 0) < 1500, 'well under a second or two, whatever the length');
+});
+
+const dragTypes = (/** @type {Wire} */ w) => w.sent.filter((m) => m.method === 'Input.dispatchDragEvent').map((m) => String(m.params.type));
+
+test('drop: dragEnter, dragOver, drop at the point, each carrying one text/plain item; only the drop counts as input; a drag that entered and is then stopped is cancelled', async () => {
+  const w = new Wire();
+  w.on('Input.dispatchDragEvent', () => ({}));
+  const input = new Input(w.client, 'S', { sleep: async () => {} });
+  /** @type {string[]} */ const order = [];
+  const TEXT = '第一行\nline 2';
+  const r = await input.locked(() => input.drop(TEXT, { x: 10, y: 20 }, { fast: true, before: async () => { order.push('before'); }, guard: () => { order.push('guard'); } }));
+  assert.deepEqual(r, { dropped: 10 });
+  assert.deepEqual(dragTypes(w), ['dragEnter', 'dragOver', 'drop']);
+  for (const m of w.sent) {
+    assert.deepEqual([m.params.x, m.params.y, m.params.data], [10, 20, { items: [{ mimeType: 'text/plain', data: TEXT }], dragOperationsMask: 1 }]);
+  }
+  assert.deepEqual(order, ['before', 'guard', 'before', 'guard', 'before', 'guard'], 'checked before each of the three');
+  assert.equal(input.sent, 1, 'the drop is the one that counts');
+  assert.deepEqual(input.pointer, { x: 10, y: 20 });
+
+  // the target is covered when the drop is about to go: the drag is cancelled, nothing counted
+  w.sent.length = 0;
+  let n = 0;
+  await rejectsWith(() => input.locked(() => input.drop('x', { x: 1, y: 1 }, { fast: true, before: async () => { if (++n === 3) throw new SdkError('occluded', 'covered'); } })), 'occluded');
+  assert.deepEqual(dragTypes(w), ['dragEnter', 'dragOver', 'dragCancel']);
+  assert.equal(input.sent, 1);
+  // stopped before the drag entered: nothing to cancel
+  w.sent.length = 0;
+  await rejectsWith(() => input.locked(() => input.drop('x', { x: 1, y: 1 }, { fast: true, guard: () => { throw new SdkError('stale_ref', 'gone'); } })), 'stale_ref');
+  assert.deepEqual(dragTypes(w), []);
+  await rejectsWith(() => input.locked(() => input.drop('', { x: 1, y: 1 }, { fast: true })), 'bad_argument');
+  await rejectsWith(() => input.locked(() => input.drop('x'.repeat(1_000_001), { x: 1, y: 1 }, { fast: true })), 'bad_argument');
+  assert.deepEqual(dragTypes(w), [], 'a text that cannot be dropped sends nothing');
+});
+
+test('drop into a ref: click, (replace: select-all, Backspace, proven empty), drop on the field; read before and after (changed, exact); what cannot be dropped changes nothing', async () => {
+  const { w, page } = actWire({ nodes: { 7: { box: [100, 100, 200, 30], role: 'textbox', name: 'go' } } });
+  const tab = await ready(w);
+  page.text = { value: true, text: 'old' };
+  /** what the field makes of a dropped text @type {(text: string, had: string) => string} */ let field = (text, had) => had + text.replace(/\n/g, ' ');
+  let backspace = true;
+  w.on('Input.dispatchKeyEvent', (p) => { if (p.code === 'Backspace' && p.type !== 'keyUp' && backspace) page.text = { ...page.text, text: '' }; return {}; });
+  w.on('Input.dispatchDragEvent', (p) => { if (p.type === 'drop') page.text = { ...page.text, text: field(String(p.data.items[0].text ?? p.data.items[0].data), page.text.text) }; return {}; });
+  const ref = refOf(tab, await tab.snapshot(), 'go');
+
+  // replace: the field is emptied first; a single-line field shows a line break as a space
+  const r = /** @type {any} */ (await tab.drop(ref, 'one\ntwo', { fast: true, replace: true }));
+  assert.deepEqual([r.action, r.dropped, r.changed, r.exact, r.note], ['drop', 7, true, true, undefined]);
+  assert.equal(page.text.text, 'one two');
+  assert.equal(mouse(w, 'mousePressed').length, 1, 'one click');
+  const keys = w.sent.filter((m) => m.method === 'Input.dispatchKeyEvent' && m.params.type !== 'keyUp').map((m) => `${m.params.code}:${m.params.commands ?? ''}`);
+  assert.deepEqual(keys, ['MetaLeft:', 'KeyA:selectAll', 'Backspace:']);
+  assert.deepEqual(dragTypes(w), ['dragEnter', 'dragOver', 'drop']);
+  const drop = w.sent.find((m) => m.params.type === 'drop');
+  assert.ok(drop && drop.params.x >= 100 && drop.params.x < 300 && drop.params.y >= 100 && drop.params.y < 130, 'the drop lands inside the field');
+  // every drag event comes after a hit test of its own (the point is checked as before a press)
+  const seq = w.sent.filter((m) => m.method === 'DOM.getNodeForLocation' || m.method === 'Input.dispatchDragEvent').map((m) => (m.method === 'DOM.getNodeForLocation' ? 'hit' : m.params.type));
+  assert.deepEqual(seq.slice(-6), ['hit', 'dragEnter', 'hit', 'dragOver', 'hit', 'drop']);
+
+  // without replace: the text goes in among what is there (exact: somewhere in the value)
+  const more = /** @type {any} */ (await tab.drop(ref, ' three', { fast: true }));
+  assert.deepEqual([more.changed, more.exact, more.note], [true, true, undefined]);
+  assert.equal(page.text.text, 'one two three');
+  // with replace the whole value must be the text; a lost space or a cut text is not exact
+  field = (text) => text.replace(' ', '');
+  await assert.rejects(tab.drop(ref, 'a b', { fast: true, replace: true }), (e) => e instanceof SdkError && e.code === 'result_unknown' && /does not hold it as given/.test(e.message));
+  // review round 3: the page takes no dropped text here: an error (the next step must not run); with replace the
+  // field was emptied, and the error says so
+  field = (_, had) => had;
+  page.text = { value: true, text: 'draft' };
+  // review round 4: the same text right after the drop is neither done nor "not done" (the page may handle the drop
+  // later): result_unknown, and nothing else is tried (a second way in on a guess would put the text in twice)
+  await assert.rejects(tab.drop(ref, 'nope', { fast: true }), (e) => e instanceof SdkError && e.code === 'result_unknown'
+    && /same as before the drop.*Read the field again first; only if the text is not there.*type and whole: true/.test(e.message));
+  assert.equal(page.text.text, 'draft');
+  assert.equal(w.count('Input.insertText'), 0, 'no second way in');
+  await assert.rejects(tab.drop(ref, 'nope', { fast: true, replace: true }), (e) => e instanceof SdkError && e.code === 'result_unknown' && /emptied first and is empty now/.test(e.message));
+  assert.equal(page.text.text, '');
+  // review round 3: Backspace left a space behind: that is not empty, nothing is dropped
+  page.text = { value: true, text: 'draft' };
+  w.on('Input.dispatchKeyEvent', (p) => { if (p.code === 'Backspace' && p.type !== 'keyUp') page.text = { ...page.text, text: ' ' }; return {}; });
+  let before = dragTypes(w).length;
+  await rejectsWith(() => tab.drop(ref, 'x', { fast: true, replace: true }), 'result_unknown');
+  assert.equal(dragTypes(w).length, before, 'no drag: the field is not provably empty');
+  w.on('Input.dispatchKeyEvent', (p) => { if (p.code === 'Backspace' && p.type !== 'keyUp' && backspace) page.text = { ...page.text, text: '' }; return {}; });
+  page.text = { value: true, text: 'one two three' };
+  field = (text, had) => had + text;
+
+  // replace, but Backspace did not empty the field: nothing dropped, and the caller is told the field changed
+  backspace = false;
+  let drags = dragTypes(w).length;
+  await rejectsWith(() => tab.drop(ref, 'x', { fast: true, replace: true }), 'result_unknown');
+  assert.equal(dragTypes(w).length, drags, 'no drag at all');
+  backspace = true;
+
+  // something covers the field when the drop is about to go: no drop, the drag is cancelled
+  const hit = page.hit;
+  let hits = 0;
+  page.hit = (sid, x, y) => (++hits >= 4 ? { backendNodeId: 99, frameId: MAIN } : hit(sid, x, y)); // 1: the click; 2-4: the three drag events
+  drags = dragTypes(w).length;
+  await assert.rejects(tab.drop(ref, 'x', { fast: true }), (e) => e instanceof SdkError);
+  assert.deepEqual(dragTypes(w).slice(drags), ['dragEnter', 'dragOver', 'dragCancel']);
+  page.hit = hit;
+
+  // a text that cannot be dropped changes nothing: no click, no select-all, no Backspace
+  const sentBefore = w.sent.length;
+  await rejectsWith(() => tab.drop(ref, '', { fast: true, replace: true }), 'bad_argument');
+  assert.equal(w.sent.slice(sentBefore).filter((m) => m.method.startsWith('Input.')).length, 0, 'no input at all');
+  page.readOnly = true;
+  await rejectsWith(() => tab.drop(ref, 'x', { fast: true }), 'unsupported');
+  assert.equal(w.sent.slice(sentBefore).filter((m) => m.method.startsWith('Input.')).length, 0);
+});
+
+test('the keys Meta+V / Meta+C / Meta+X are pressed but run no clipboard command, and the result says so', async () => {
+  const { w } = actWire();
+  const tab = await ready(w);
+  const v = /** @type {any} */ (await tab.key('Meta+v', { fast: true }));
+  assert.match(v.note, /pasted nothing.*use drop with the text/);
+  assert.equal(w.sent.find((m) => m.params.code === 'KeyV')?.params.commands, undefined);
+  assert.match(/** @type {any} */ (await tab.key('Control+c', { fast: true })).note, /did not copy/);
+  assert.match(/** @type {any} */ (await tab.key('Meta+x', { fast: true })).note, /did not cut/);
+  assert.equal('note' in await tab.key('Meta+a', { fast: true }), false);
+  assert.equal('note' in await tab.key('Shift+Meta+v', { fast: true }), false, 'another shortcut');
 });

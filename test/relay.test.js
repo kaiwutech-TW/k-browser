@@ -167,6 +167,12 @@ const refused = [
   ['Emulation.setTimezoneOverride', { timezoneId: 'UTC' }],
   ['Network.setUserAgentOverride', { userAgent: 'x' }],
   ['Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: false }],
+  // a drag may carry one piece of plain text, never a local file or another format
+  ['Input.dispatchDragEvent', { type: 'drop', x: 1, y: 1, data: { items: [], files: ['/etc/passwd'], dragOperationsMask: 1 } }],
+  ['Input.dispatchDragEvent', { type: 'drop', x: 1, y: 1, data: { items: [{ mimeType: 'text/plain', data: 'x' }], files: ['/etc/passwd'], dragOperationsMask: 1 } }],
+  ['Input.dispatchDragEvent', { type: 'drop', x: 1, y: 1, data: { items: [{ mimeType: 'text/html', data: '<b>x</b>' }], dragOperationsMask: 1 } }],
+  ['Input.dispatchDragEvent', { type: 'drop', x: 1, y: 1, data: { items: [{ mimeType: 'text/plain', data: 'x' }, { mimeType: 'text/uri-list', data: 'file:///etc/passwd' }], dragOperationsMask: 1 } }],
+  ['Input.dispatchDragEvent', { type: 'drop', x: 1, y: 1 }],
 ];
 
 for (const [method, params] of refused) {
@@ -188,6 +194,7 @@ test('page-scoped methods Kav uses are forwarded', async () => {
     ['Runtime.evaluate', { expression: '1+1' }], ['Page.navigate', { url: 'https://example.org/' }], ['Network.enable', {}],
     ['Runtime.addBinding', { name: '__kfw' }], ['Page.addScriptToEvaluateOnNewDocument', { source: '1' }],
     ['Input.dispatchMouseEvent', { type: 'mouseMoved', x: 1, y: 1 }], ['Emulation.setFocusEmulationEnabled', { enabled: true }],
+    ['Input.dispatchDragEvent', { type: 'drop', x: 1, y: 1, data: { items: [{ mimeType: 'text/plain', data: 'some text' }], dragOperationsMask: 1 } }],
     ['Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }],
   ])) {
     assert.equal((await a.call(method, params, sessionId)).echo, method);

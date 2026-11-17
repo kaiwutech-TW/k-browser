@@ -23,6 +23,7 @@
 
 import { SdkError } from './cdp.js';
 import { keyEvent, keyForChar, macCommands, MODIFIER, parseCombo, shifted } from './keys.js';
+import { pieceSize, typingPlan } from './rhythm.js';
 
 /** @typedef {{ x: number, y: number }} Point */
 /** @typedef {{ rand?: () => number, sleep?: (ms: number) => Promise<void> }} InputDeps */
@@ -31,6 +32,7 @@ import { keyEvent, keyForChar, macCommands, MODIFIER, parseCombo, shifted } from
 
 const realSleep = (/** @type {number} */ ms) => new Promise((r) => setTimeout(r, ms));
 const MAX_WHEEL = 100_000; // px per call
+export const MAX_DROP = 1_000_000; // characters of one dropped text
 
 export class Input {
   /** @param {import('./cdp.js').CdpClient} client @param {string} sessionId the tab's root session @param {InputDeps} [deps] */
@@ -254,40 +256,93 @@ export class Input {
 
   /**
    * Type text into whatever has focus: US-keyboard characters as key presses (Shift where a real keyboard needs it),
-   * everything else with Input.insertText. `check` runs before each key and each insertion (callers check the focus
-   * is still where it should be), `guard` right before each send. Returns how much went in as a non-key insertion.
+   * everything else with Input.insertText, a few characters at a time (as an input method commits them). The pace is
+   * a person's, planned for the whole text (rhythm.js): uneven, with pauses where a person pauses. `check` runs
+   * before each key and each insertion (callers check the focus is still where it should be), `guard` right before
+   * each send. Returns how much went in as a non-key insertion.
    * `asKeys`: a character that is not on a US keyboard goes in as a key press carrying that character (key = the
    * character, no code), as a keyboard layout that has it would send, instead of an insertion: a <select>'s
-   * type-to-select listens to key presses only (measured: insertText does not move it).
-   * @param {string} text @param {{ fast?: boolean, check?: Check, guard?: Guard, asKeys?: boolean }} [o]
+   * type-to-select listens to key presses only (measured: insertText does not move it); the pace is then even and
+   * quick (type-to-select forgets its keys after a second).
+   * `fast` (tests): no pauses, and text that is not typed as keys goes in whole.
+   * `whole`: nothing is typed as keys except line breaks (Enter): each line goes in at once with Input.insertText,
+   * as an input method commits a phrase or dictation a sentence. For a long text; the pauses are short and do not
+   * grow with the text.
+   * @param {string} text @param {{ fast?: boolean, check?: Check, guard?: Guard, asKeys?: boolean, whole?: boolean }} [o]
    */
-  async type(text, { fast = false, check, guard, asKeys = false } = {}) {
-    let inserted = 0;
-    let run = '';
-    const flush = async () => {
-      if (!run) return;
-      await check?.();
-      this.#halt();
-      guard?.();
-      const sent = this.client.call('Input.insertText', { text: run }, this.sessionId);
-      this.#counted();
-      await sent;
-      this.lastKeyAt = Date.now();
-      inserted += [...run].length;
-      run = '';
+  async type(text, { fast = false, check, guard, asKeys = false, whole = false } = {}) {
+    /** @type {({ ch: string, shift?: boolean, key: import('./keys.js').KeyDef } | { text: string })[]} */
+    const units = [];
+    /** @type {string[]} */ let run = [];
+    const cut = () => {
+      while (run.length) units.push({ text: run.splice(0, fast || whole ? run.length : pieceSize(this.rand, run.length)).join('') });
     };
     for (const ch of text) {
-      const k = keyForChar(ch) ?? (asKeys ? { key: ch, code: '', keyCode: 0, text: ch } : null);
+      const k = whole ? (ch === '\n' || ch === '\r' ? keyForChar('\n') : null)
+        : keyForChar(ch) ?? (asKeys ? { key: ch, code: '', keyCode: 0, text: ch } : null);
       if (!k) {
-        run += ch;
+        run.push(ch);
         continue;
       }
-      await flush();
-      await this.#tap(k, k.shift ? ['Shift'] : [], fast, guard, check);
-      await this.pause(35, 110, fast);
+      cut();
+      units.push({ ch, ...(k.shift ? { shift: true } : {}), key: k });
     }
-    await flush();
+    cut();
+    const plan = fast || whole ? null : typingPlan(units, this.rand, { steady: asKeys });
+    let inserted = 0;
+    for (const [i, u] of units.entries()) {
+      if ('text' in u) {
+        await check?.();
+        this.#halt();
+        guard?.();
+        const sent = this.client.call('Input.insertText', { text: u.text }, this.sessionId);
+        this.#counted();
+        await sent;
+        this.lastKeyAt = Date.now();
+        inserted += [...u.text].length;
+      } else {
+        await this.#tap(u.key, u.key.shift ? ['Shift'] : [], fast, guard, check, undefined, plan?.holds[i]);
+      }
+      if (plan) await this.sleep(plan.gaps[i]);
+      else if (whole) await this.pause(60, 170, fast);
+    }
     return { keys: [...text].length - inserted, inserted };
+  }
+
+  /**
+   * Drop a text at a point, the way a piece of text dragged in from another window arrives: dragEnter, dragOver, drop
+   * (Input.dispatchDragEvent). The page gets a trusted drop carrying text/plain, and a field under the point takes
+   * the whole text at once, at the point (beforeinput: insertFromDrop). It is how a long text goes in without being
+   * typed key by key. Nothing goes through the system clipboard: the user's clipboard is neither read nor changed.
+   * `before` is awaited before each of the three events (callers check what is under the point), `guard` runs
+   * synchronously right before each send. Once the drag has entered the page and something then stops it, the drag
+   * is cancelled (best effort), so the page is not left showing a drop that never comes.
+   * @param {string} text @param {Point} to main-frame viewport coordinates
+   * @param {{ fast?: boolean, guard?: Guard, before?: () => Promise<void> }} [o]
+   */
+  async drop(text, to, { fast = false, guard, before } = {}) {
+    droppable(text);
+    const data = { items: [{ mimeType: 'text/plain', data: text }], dragOperationsMask: 1 }; // 1: copy
+    const at = { x: to.x, y: to.y };
+    let entered = false;
+    try {
+      for (const type of /** @type {const} */ (['dragEnter', 'dragOver', 'drop'])) {
+        await before?.();
+        this.#halt();
+        guard?.();
+        const sent = this.client.call('Input.dispatchDragEvent', { type, ...at, data }, this.sessionId);
+        if (type === 'drop') this.#counted(); // the one that puts the text in
+        entered = true;
+        await sent;
+        if (type !== 'drop') await this.pause(30, 90, fast);
+      }
+    } catch (e) {
+      if (entered) await this.client.call('Input.dispatchDragEvent', { type: 'dragCancel', ...at, data }, this.sessionId).catch(() => {});
+      throw e;
+    }
+    this.pointer = at;
+    this.lastKeyAt = Date.now();
+    return { dropped: [...text].length };
   }
 
   /** Press a key or combination ("Enter", "Shift+Tab", "A" = Shift+KeyA). `commands`: editing commands it runs.
@@ -305,8 +360,9 @@ export class Input {
    * react to a modifier's keydown); ups are always sent. With Shift held a key gives its shifted character, as on a
    * real keyboard; with Control / Alt / Meta held it types nothing (a shortcut).
    * @param {import('./keys.js').KeyDef} k @param {(keyof typeof MODIFIER)[]} mods @param {boolean} fast @param {Guard} [guard] @param {Check} [check] @param {string[]} [commands]
+   * @param {number} [hold] ms the key stays down (default: 20 to 60)
    */
-  async #tap(k, mods, fast, guard, check, commands) {
+  async #tap(k, mods, fast, guard, check, commands, hold) {
     let bits = 0;
     for (const m of mods) {
       const def = parseCombo(m).key;
@@ -322,7 +378,8 @@ export class Input {
     this.#halt();
     guard?.();
     await this.#down(types ? 'keyDown' : 'rawKeyDown', def, bits, commands);
-    await this.pause(20, 60, fast);
+    if (hold === undefined) await this.pause(20, 60, fast);
+    else if (!fast) await this.sleep(hold);
     await this.#up(def, bits);
     this.lastKeyAt = Date.now();
     for (const m of [...mods].reverse()) {
@@ -345,6 +402,12 @@ export class Input {
     await this.client.call('Input.dispatchKeyEvent', keyEvent('keyUp', def, bits), this.sessionId);
     this.keys.delete(def.code);
   }
+}
+
+/** Throws unless the text can be dropped: callers check before they touch the page. @param {string} text */
+export function droppable(text) {
+  if (text === '') throw new SdkError('bad_argument', 'drop needs a text');
+  if (text.length > MAX_DROP) throw new SdkError('bad_argument', `drop takes at most ${MAX_DROP} characters`);
 }
 
 /** @param {number} t */

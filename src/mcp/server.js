@@ -1249,7 +1249,7 @@ export class McpSession {
       ctl.stepSent = t.input.sent;
       try {
         const now = await this.#guard(e, t);
-        const needsRef = ['click', 'dblclick', 'type', 'select'].includes(s.do);
+        const needsRef = ['click', 'dblclick', 'type', 'drop', 'select'].includes(s.do);
         // a key goes wherever the focus is, whatever ref comes with it: only scroll takes an optional ref
         if (needsRef || (s.do === 'scroll' && s.ref !== undefined)) {
           if (s.ref === undefined) throw new ToolError('bad_argument', `${s.do} needs a ref`);
@@ -1261,11 +1261,12 @@ export class McpSession {
         switch (s.do) {
           case 'click': done.push(await t.click(s.ref)); break;
           case 'dblclick': done.push(await t.dblclick(s.ref)); break;
-          case 'type': done.push(await t.type(s.ref, String(s.text ?? ''), { replace: s.replace === true })); break;
+          case 'type': done.push(await t.type(s.ref, String(s.text ?? ''), { replace: s.replace === true, whole: s.whole === true })); break;
+          case 'drop': done.push(await t.drop(s.ref, String(s.text ?? ''), { replace: s.replace === true })); break;
           case 'select': done.push(await t.select(s.ref, { ...(s.value !== undefined ? { value: String(s.value) } : {}), ...(s.label !== undefined ? { label: String(s.label) } : {}) })); break;
           case 'key': done.push(await t.key(String(s.key ?? ''))); break;
           case 'scroll': done.push(await t.scroll({ ...(s.ref !== undefined ? { ref: String(s.ref) } : {}), dx: Number(s.dx ?? 0), dy: Number(s.dy ?? 0) })); break;
-          default: throw new ToolError('bad_argument', 'do must be click, dblclick, type, select, key or scroll');
+          default: throw new ToolError('bad_argument', 'do must be click, dblclick, type, drop, select, key or scroll');
         }
         ctl.done = done.length;
       } catch (err) {

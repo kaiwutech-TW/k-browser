@@ -295,6 +295,32 @@ export async function fixtures() {
         r3.innerHTML = '<button data-k="slotted" style="position:absolute;left:10px;top:10px;width:160px;height:30px"><slot></slot></button>';
         for (const b of [...r1.querySelectorAll('button'), ...r2.querySelectorAll('button'), ...r3.querySelectorAll('button')]) mark(b);
       </script>`,
+    // drop: what the page saw of each drop goes into body.dataset (the last drop's text, whether it was trusted, the
+    // input type that followed, whether a paste event ever came); "deaf" and "picky" (an editor) refuse drops but take
+    // inserted text; "stone" lets text be deleted but takes none, dropped or inserted; "slow" takes a drop 350 ms late
+    '/drop': () => `<!doctype html><meta charset="utf-8"><title>drop</title><style>body{margin:0}</style>
+      <textarea aria-label="area" style="position:absolute;left:20px;top:20px;width:300px;height:80px">old text</textarea>
+      <input aria-label="line" style="position:absolute;left:20px;top:120px;width:300px">
+      <div contenteditable role="textbox" aria-label="rich" style="position:absolute;left:20px;top:160px;width:300px;height:80px"></div>
+      <input aria-label="deaf" ondrop="event.preventDefault()" style="position:absolute;left:20px;top:260px;width:300px">
+      <div contenteditable role="textbox" aria-label="picky" ondrop="event.preventDefault()" style="position:absolute;left:360px;top:20px;width:300px;height:120px"></div>
+      <input aria-label="slow" style="position:absolute;left:360px;top:200px;width:300px"
+        ondrop="event.preventDefault(); const t = event.dataTransfer.getData('text/plain'); setTimeout(() => { this.value += t; }, 350)">
+      <input aria-label="stone" value="draft" ondrop="event.preventDefault()" onbeforeinput="if (event.inputType.startsWith('insert')) event.preventDefault()"
+        style="position:absolute;left:360px;top:160px;width:300px">
+      <script>
+        let drops = 0;
+        document.addEventListener('drop', (e) => {
+          Object.assign(document.body.dataset, { drops: ++drops, dropTrusted: e.isTrusted, dropText: e.dataTransfer.getData('text/plain'),
+            dropTypes: [...e.dataTransfer.types].join(','), dropFiles: e.dataTransfer.files.length });
+        }, true);
+        document.addEventListener('beforeinput', (e) => { document.body.dataset.inputType = e.inputType; }, true);
+        document.addEventListener('paste', () => { document.body.dataset.pasted = '1'; }, true);
+      </script>`,
+    '/drop-host': (other) => `<!doctype html><title>drop host</title><style>body{margin:0}</style>
+      <iframe src="http://localhost:${other}/drop-inner" style="position:absolute;left:40px;top:60px;width:360px;height:160px;border:4px solid"></iframe>`,
+    '/drop-inner': () => `<!doctype html><meta charset="utf-8"><title>drop inner</title><style>body{margin:0}</style>
+      <textarea aria-label="inner area" style="position:absolute;left:20px;top:30px;width:300px;height:80px">old</textarea>`,
     '/act-form': () => `<!doctype html><meta charset="utf-8"><title>form</title><style>body{margin:0}</style>${REC}
       <input aria-label="name" style="position:absolute;left:20px;top:20px;width:200px">
       <select aria-label="station" style="position:absolute;left:20px;top:80px">

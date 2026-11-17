@@ -36,14 +36,15 @@ export const TOOLS = [
   },
   {
     name: 'act',
-    description: 'Real mouse and keyboard input, re-checked right before each press; stops at the first step that fails or a dialog (result_unknown: part of it went in, read the page before repeating). Returns an actionId (taken before the first step), what each step delivered, and tabs it opened. With dialog instead of steps: accept or dismiss the open dialog (alerts are accepted for you).',
+    description: 'Real mouse and keyboard input, re-checked right before each press; stops at the first step that fails or a dialog (result_unknown: part of it went in, read the page before repeating). type presses keys at a person\'s pace; with whole each line goes in at once (long text, URLs). drop puts a whole text into a field as dragged-in text (no clipboard); some editors take none: then type with whole. The key Meta+V pastes nothing. Returns an actionId (taken before the first step), what each step delivered, and tabs it opened. With dialog instead of steps: accept or dismiss the open dialog (alerts are accepted for you).',
     inputSchema: { type: 'object', properties: {
       tab,
       steps: { type: 'array', minItems: 1, maxItems: 10, items: { type: 'object', properties: {
-        do: { enum: ['click', 'dblclick', 'type', 'select', 'key', 'scroll'] },
+        do: { enum: ['click', 'dblclick', 'type', 'drop', 'select', 'key', 'scroll'] },
         ref,
-        text: { type: 'string', description: 'type: the text' },
-        replace: { type: 'boolean', description: 'type: replace the field\'s text' },
+        text: { type: 'string', description: 'type, drop: the text' },
+        replace: { type: 'boolean', description: 'type, drop: replace the field\'s text' },
+        whole: { type: 'boolean', description: 'type: each line at once' },
         value: { type: 'string', description: 'select: option value' },
         label: { type: 'string', description: 'select: option label' },
         key: { type: 'string', description: 'key: e.g. Enter, Shift+Tab' },
